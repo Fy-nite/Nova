@@ -1,0 +1,114 @@
+[gd_scene format=3 uid="uid://boc7t7v2kr1su"]
+
+[ext_resource type="Texture2D" uid="uid://chalc2g3lp5mm" path="res://stages/prototype/art/textures/White.png" id="1_5kwao"]
+[ext_resource type="Texture2D" uid="uid://wbiga3kt5t3b" path="res://stages/prototype/art/textures/Black.png" id="1_erxa5"]
+[ext_resource type="PackedScene" uid="uid://ccn0wo4ohmbv0" path="res://entities/player/player.tscn" id="2_ljefa"]
+[ext_resource type="Script" uid="uid://c5rnbxf7cnm7o" path="res://entities/interactable_test/interactable_test.gd" id="3_65t83"]
+[ext_resource type="Material" uid="uid://b3cldrwcdhuty" path="res://materials/orange_material.tres" id="4_8lktr"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_bxatn"]
+
+[sub_resource type="Sky" id="Sky_erxa5"]
+sky_material = SubResource("ProceduralSkyMaterial_bxatn")
+
+[sub_resource type="Environment" id="Environment_ljefa"]
+sky = SubResource("Sky_erxa5")
+tonemap_mode = 2
+ssao_enabled = true
+glow_enabled = true
+glow_levels/6 = 0.13
+glow_levels/7 = 0.25
+glow_normalized = true
+glow_intensity = 0.2
+glow_bloom = 0.1
+glow_blend_mode = 0
+glow_hdr_threshold = 0.5
+glow_hdr_scale = 1.0
+glow_hdr_luminance_cap = 8.0
+fog_enabled = true
+volumetric_fog_enabled = true
+adjustment_enabled = true
+adjustment_contrast = 1.05
+adjustment_saturation = 1.1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ljefa"]
+albedo_texture = ExtResource("1_5kwao")
+metallic_specular = 0.0
+uv1_triplanar = true
+uv1_world_triplanar = true
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_5kwao"]
+material = SubResource("StandardMaterial3D_ljefa")
+size = Vector2(1000, 1000)
+
+[sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_mwv38"]
+points = PackedVector3Array(-500, 0, -500, -500, 0, 500, 500, 0, -500, 500, 0, 500)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mwv38"]
+albedo_texture = ExtResource("1_erxa5")
+metallic_specular = 0.0
+uv1_triplanar = true
+uv1_world_triplanar = true
+
+[sub_resource type="BoxMesh" id="BoxMesh_65t83"]
+material = SubResource("StandardMaterial3D_mwv38")
+size = Vector3(4, 0.2, 4)
+
+[sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_5kwao"]
+points = PackedVector3Array(-2, -0.1, -2, -2, 0.1, -2, 2, -0.1, -2, -2, -0.1, 2, -2, 0.1, 2, 2, 0.1, -2, 2, -0.1, 2, 2, 0.1, 2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ac262"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_65t83"]
+
+[node name="Prototype" type="Node3D" unique_id=1831033359]
+metadata/_edit_group_ = true
+metadata/_edit_lock_ = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1748113669]
+environment = SubResource("Environment_ljefa")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="WorldEnvironment" unique_id=1395289630]
+transform = Transform3D(0.70710665, 0.5000002, -0.49999997, 0, 0.70710665, 0.7071069, 0.7071069, -0.49999997, 0.49999982, 0, 0, 0)
+light_energy = 0.5
+light_bake_mode = 1
+shadow_enabled = true
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=1441076186]
+collision_mask = 0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=1764776310]
+mesh = SubResource("PlaneMesh_5kwao")
+skeleton = NodePath("../..")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=477623768]
+shape = SubResource("ConvexPolygonShape3D_mwv38")
+
+[node name="Platform" type="StaticBody3D" parent="." unique_id=1487904008]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, -4)
+collision_mask = 0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Platform" unique_id=2009933810]
+mesh = SubResource("BoxMesh_65t83")
+skeleton = NodePath("../..")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Platform" unique_id=561651915]
+shape = SubResource("ConvexPolygonShape3D_5kwao")
+
+[node name="InteractableTest" type="Area3D" parent="." unique_id=673150180 node_paths=PackedStringArray("mesh")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, 0)
+script = ExtResource("3_65t83")
+mesh = NodePath("MeshInstance3D")
+interaction_text = "Interact (F)"
+metadata/_custom_type_script = "uid://gy6m101wg8y5"
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="InteractableTest" unique_id=1607432042]
+material_override = ExtResource("4_8lktr")
+mesh = SubResource("BoxMesh_ac262")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="InteractableTest" unique_id=1808408522]
+shape = SubResource("BoxShape3D_65t83")
+
+[node name="Player" parent="." unique_id=769471447 instance=ExtResource("2_ljefa")]
+
+[connection signal="interacted" from="InteractableTest" to="InteractableTest" method="_on_interacted"]

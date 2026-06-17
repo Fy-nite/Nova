@@ -1,0 +1,308 @@
+[gd_scene format=3 uid="uid://ccn0wo4ohmbv0"]
+
+[ext_resource type="Script" uid="uid://b6r5nirxxwbv1" path="res://entities/player/scripts/player.gd" id="1_abrql"]
+[ext_resource type="Script" uid="uid://ccyxu07850igd" path="res://entities/player/scripts/camera_scripts/camera_controller.gd" id="1_symyc"]
+[ext_resource type="Script" uid="uid://dtysllkbfv2t4" path="res://entities/player/scripts/camera_scripts/camera_effects.gd" id="3_26q78"]
+[ext_resource type="Script" uid="uid://gp6bqju68qbm" path="res://common/state_machine/state_machine.gd" id="3_sglur"]
+[ext_resource type="Script" uid="uid://d10pnp7g3n8et" path="res://entities/player/scripts/states/idle.gd" id="4_bls4j"]
+[ext_resource type="Script" uid="uid://nl5w2556yiwx" path="res://entities/player/scripts/interaction/interaction_ray.gd" id="4_wvtmh"]
+[ext_resource type="Script" uid="uid://bu3taa808pwcf" path="res://entities/player/scripts/states/walk.gd" id="5_fkugw"]
+[ext_resource type="Script" uid="uid://c10iex2h3vjua" path="res://entities/player/scripts/states/run.gd" id="6_8fjmc"]
+[ext_resource type="Script" uid="uid://dn7ctexaafr7b" path="res://entities/player/scripts/states/air.gd" id="7_qiwj3"]
+[ext_resource type="Script" uid="uid://c5stq0yqgk64w" path="res://entities/player/scripts/states/crouch.gd" id="9_bectd"]
+[ext_resource type="Script" uid="uid://drnxktebmux5s" path="res://entities/player/scripts/states/slide.gd" id="11_7thud"]
+[ext_resource type="Texture2D" uid="uid://c57prkyrgljip" path="res://entities/player/art/crosshair.png" id="12_a1qjk"]
+[ext_resource type="Script" uid="uid://du5goysumm1fk" path="res://entities/player/scripts/ui/ui.gd" id="12_j3ovn"]
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_sfv1e"]
+margin = 0.02
+height = 1.8
+radius = 0.3
+
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_qiwj3"]
+height = 0.4
+radius = 0.3
+
+[sub_resource type="Animation" id="Animation_bectd"]
+resource_name = "crouch"
+step = 0.1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("CollisionShape3D:position")
+tracks/0/interp = 2
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 0.9, 0), Vector3(0, 0.65, 0)]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("CollisionShape3D:shape:height")
+tracks/1/interp = 2
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [1.8, 1.3]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("CrouchCast:position")
+tracks/2/interp = 2
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 1.5, 0), Vector3(0, 1, 0)]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("CameraController:position")
+tracks/3/interp = 2
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 1.5, 0), Vector3(0, 1, 0)]
+}
+
+[sub_resource type="Animation" id="Animation_7thud"]
+resource_name = "idle"
+length = 0.1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("CameraController:position")
+tracks/0/interp = 2
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [Vector3(0, 1.5, 0)]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("CrouchCast:position")
+tracks/1/interp = 2
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [Vector3(0, 1.5, 0)]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("CollisionShape3D:shape:height")
+tracks/2/interp = 2
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [1.8]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("CollisionShape3D:position")
+tracks/3/interp = 2
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0),
+"transitions": PackedFloat32Array(1),
+"update": 0,
+"values": [Vector3(0, 0.9, 0)]
+}
+
+[sub_resource type="Animation" id="Animation_wvtmh"]
+resource_name = "uncrouch"
+step = 0.1
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("CollisionShape3D:position")
+tracks/0/interp = 2
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 0.65, 0), Vector3(0, 0.9, 0)]
+}
+tracks/1/type = "value"
+tracks/1/imported = false
+tracks/1/enabled = true
+tracks/1/path = NodePath("CollisionShape3D:shape:height")
+tracks/1/interp = 2
+tracks/1/loop_wrap = true
+tracks/1/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [1.3, 1.8]
+}
+tracks/2/type = "value"
+tracks/2/imported = false
+tracks/2/enabled = true
+tracks/2/path = NodePath("CrouchCast:position")
+tracks/2/interp = 2
+tracks/2/loop_wrap = true
+tracks/2/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 1, 0), Vector3(0, 1.5, 0)]
+}
+tracks/3/type = "value"
+tracks/3/imported = false
+tracks/3/enabled = true
+tracks/3/path = NodePath("CameraController:position")
+tracks/3/interp = 2
+tracks/3/loop_wrap = true
+tracks/3/keys = {
+"times": PackedFloat32Array(0, 1),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(0, 1, 0), Vector3(0, 1.5, 0)]
+}
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_a1qjk"]
+_data = {
+&"crouch": SubResource("Animation_bectd"),
+&"idle": SubResource("Animation_7thud"),
+&"uncrouch": SubResource("Animation_wvtmh")
+}
+
+[node name="Player" type="CharacterBody3D" unique_id=100052802 node_paths=PackedStringArray("camera_controller", "crouch_cast", "camera_animator", "jump_buffer_timer", "coyote_timer")]
+collision_layer = 2
+script = ExtResource("1_abrql")
+camera_controller = NodePath("CameraController")
+crouch_cast = NodePath("CrouchCast")
+camera_animator = NodePath("CameraAnimator")
+jump_buffer_timer = NodePath("Timers/JumpBufferTimer")
+coyote_timer = NodePath("Timers/CoyoteTimer")
+metadata/_edit_group_ = true
+metadata/_edit_lock_ = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=279275765]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CylinderShape3D_sfv1e")
+debug_color = Color(0, 0, 1, 1)
+
+[node name="CrouchCast" type="ShapeCast3D" parent="." unique_id=1154438856]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("CylinderShape3D_qiwj3")
+target_position = Vector3(0, 0.5, 0)
+debug_shape_custom_color = Color(0, 1, 0, 1)
+
+[node name="CameraController" type="Node3D" parent="." unique_id=1146925893 node_paths=PackedStringArray("camera_pitch", "camera_effects", "camera")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+script = ExtResource("1_symyc")
+camera_pitch = NodePath("CameraPitch")
+camera_effects = NodePath("CameraPitch/CameraEffects")
+camera = NodePath("CameraPitch/CameraEffects/Camera3D")
+
+[node name="CameraPitch" type="Node3D" parent="CameraController" unique_id=285392928]
+
+[node name="CameraEffects" type="Node3D" parent="CameraController/CameraPitch" unique_id=2111401901]
+script = ExtResource("3_26q78")
+
+[node name="Camera3D" type="Camera3D" parent="CameraController/CameraPitch/CameraEffects" unique_id=2047400601]
+
+[node name="InteractionRay" type="RayCast3D" parent="CameraController/CameraPitch/CameraEffects/Camera3D" unique_id=293225426]
+target_position = Vector3(0, 0, -1.5)
+collision_mask = 4
+collide_with_areas = true
+collide_with_bodies = false
+script = ExtResource("4_wvtmh")
+
+[node name="Timers" type="Node" parent="." unique_id=1186290854]
+
+[node name="JumpBufferTimer" type="Timer" parent="Timers" unique_id=518978151]
+wait_time = 0.1
+one_shot = true
+
+[node name="CoyoteTimer" type="Timer" parent="Timers" unique_id=6098193]
+wait_time = 0.15
+one_shot = true
+
+[node name="StateMachine" type="Node" parent="." unique_id=577915825]
+script = ExtResource("3_sglur")
+initial_state = NodePath("Idle")
+metadata/_custom_type_script = "uid://gp6bqju68qbm"
+
+[node name="Idle" type="Node" parent="StateMachine" unique_id=1236687420]
+script = ExtResource("4_bls4j")
+
+[node name="Walk" type="Node" parent="StateMachine" unique_id=827062909]
+script = ExtResource("5_fkugw")
+
+[node name="Run" type="Node" parent="StateMachine" unique_id=1784337295]
+script = ExtResource("6_8fjmc")
+
+[node name="Air" type="Node" parent="StateMachine" unique_id=1576578766]
+script = ExtResource("7_qiwj3")
+
+[node name="Crouch" type="Node" parent="StateMachine" unique_id=1531030201]
+script = ExtResource("9_bectd")
+
+[node name="Slide" type="Node" parent="StateMachine" unique_id=605332628]
+script = ExtResource("11_7thud")
+
+[node name="CameraAnimator" type="AnimationPlayer" parent="." unique_id=31102563]
+libraries/ = SubResource("AnimationLibrary_a1qjk")
+autoplay = &"idle"
+speed_scale = 4.0
+
+[node name="UI" type="CanvasLayer" parent="." unique_id=540456303 node_paths=PackedStringArray("interaction_label")]
+script = ExtResource("12_j3ovn")
+interaction_label = NodePath("InteractionLabel")
+
+[node name="Crosshair" type="TextureRect" parent="UI" unique_id=144012518]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -6.0
+offset_top = -6.0
+offset_right = 6.0
+offset_bottom = 6.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("12_a1qjk")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="InteractionLabel" type="Label" parent="UI" unique_id=1996809381]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -62.0
+offset_top = -35.5
+offset_right = 62.0
+offset_bottom = -12.5
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/outline_size = 2
+text = "Interaction Text"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[connection signal="target_changed" from="CameraController/CameraPitch/CameraEffects/Camera3D/InteractionRay" to="UI" method="_on_interaction_ray_target_changed"]

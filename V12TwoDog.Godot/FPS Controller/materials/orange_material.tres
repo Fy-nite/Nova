@@ -1,0 +1,9 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://b3cldrwcdhuty"]
+
+[ext_resource type="Texture2D" uid="uid://ckyehiaaqdkij" path="res://stages/prototype/art/textures/Orange.png" id="1_n6tk3"]
+
+[resource]
+albedo_texture = ExtResource("1_n6tk3")
+metallic_specular = 0.0
+uv1_triplanar = true
+uv1_world_triplanar = true
