@@ -46,7 +46,9 @@ var move_direction: Vector3 = Vector3.ZERO
 
 var _current_gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _was_on_floor: bool = true
-
+func _ready() -> void:
+	set_collision_mask_value(32768,true)
+	
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("jump") and can_jump and use_jump_buffer and jump_buffer_timer:
 		jump_buffer_timer.start()

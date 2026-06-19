@@ -15,19 +15,20 @@ public partial class RootLoop : Node3D
 	IRenderer renderer;
 	public override void _Ready()
 	{
-
 		V12.Core.Networking.BsonConfig.Initialize();
 		root = new GameRoot();
 		 renderer = new V12TwoDog.Renderer(GetTree());
 		root.Registry.Register("IRenderer", renderer);
 		root.Initialize();
 		//root.V12Loop();
+		root.CreateWorld("TestWorld","Gridspace");
 	}
 
 	// Called every frame. 'delta' is the elapsed time since the previous frame.
 	public override void _Process(double delta)
 	{
 		root.Update((float)delta);
+
 
 		foreach (var service in root.Registry.GetAll<IGameService>())
 			service.Update((float)delta);

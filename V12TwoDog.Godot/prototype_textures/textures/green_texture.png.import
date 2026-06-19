@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dp2igg8xokhg4"
 path.s3tc="res://.godot/imported/green_texture.png-119d9645ce2910e2885155014acdce15.s3tc.ctex"
+path.etc2="res://.godot/imported/green_texture.png-119d9645ce2910e2885155014acdce15.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://prototype_textures/textures/green_texture.png"
-dest_files=["res://.godot/imported/green_texture.png-119d9645ce2910e2885155014acdce15.s3tc.ctex"]
+dest_files=["res://.godot/imported/green_texture.png-119d9645ce2910e2885155014acdce15.s3tc.ctex", "res://.godot/imported/green_texture.png-119d9645ce2910e2885155014acdce15.etc2.ctex"]
 
 [params]
 

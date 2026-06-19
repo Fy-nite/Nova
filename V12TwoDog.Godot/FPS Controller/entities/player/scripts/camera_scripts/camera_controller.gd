@@ -15,7 +15,7 @@ const SWAY_SMOOTH: float = 10.0
 @export var mouse_sensitivity: float = 0.15
 @export var pitch_min: float = deg_to_rad(-89.0)
 @export var pitch_max: float = deg_to_rad(89.0)
-
+@export var gamepad_sensitivity := 2.0
 var mouse_input: bool = false
 var rotation_input: float = 0.0
 var pitch_input: float = 0.0
@@ -27,23 +27,21 @@ var can_update: bool = true
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-
 func _unhandled_input(event: InputEvent) -> void:
-	mouse_input = event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED
-	
-	if mouse_input:
-		var mm: InputEventMouseMotion = event as InputEventMouseMotion
-		rotation_input = -mm.relative.x * mouse_sensitivity
-		pitch_input = -mm.relative.y * mouse_sensitivity
-	
-		var dx: float = mm.relative.x
-		var dy: float = mm.relative.y
-		var roll: float = clamp(dx * SWAY_INTENSITY, -SWAY_MAX_ANGLE, SWAY_MAX_ANGLE)
-		var pitch: float = clamp(dy * SWAY_INTENSITY, -SWAY_MAX_ANGLE, SWAY_MAX_ANGLE)
-	
+	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		var mm := event as InputEventMouseMotion
+
+		rotation_input += -mm.relative.x * mouse_sensitivity
+		pitch_input += -mm.relative.y * mouse_sensitivity
+
+		var roll  = clamp(mm.relative.x * SWAY_INTENSITY,
+			-SWAY_MAX_ANGLE, SWAY_MAX_ANGLE)
+		var pitch = clamp(mm.relative.y * SWAY_INTENSITY,
+			-SWAY_MAX_ANGLE, SWAY_MAX_ANGLE)
+
 		sway_target.x = pitch
 		sway_target.z = roll
-
+		
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and Input.is_action_just_pressed("escape"):
 		get_tree().quit()
@@ -55,9 +53,11 @@ func _process(delta: float) -> void:
 		sway_target = sway_target.lerp(Vector3.ZERO, SWAY_SMOOTH * delta)
 
 func _physics_process(delta: float) -> void:
+	rotation_input += Input.get_axis("look_right", "look_left") * gamepad_sensitivity
+	pitch_input += Input.get_axis("look_down", "look_up") * gamepad_sensitivity
+
 	if can_update:
 		update_camera(delta)
-
 func update_camera(delta_time: float) -> void:
 	mouse_rotation.x = clamp(mouse_rotation.x + pitch_input * delta_time, pitch_min, pitch_max)
 	mouse_rotation.y += rotation_input * delta_time

@@ -1,18 +1,16 @@
 [gd_scene format=3 uid="uid://boc7t7v2kr1su"]
 
-[ext_resource type="Texture2D" uid="uid://chalc2g3lp5mm" path="res://stages/prototype/art/textures/White.png" id="1_5kwao"]
-[ext_resource type="Texture2D" uid="uid://wbiga3kt5t3b" path="res://stages/prototype/art/textures/Black.png" id="1_erxa5"]
-[ext_resource type="PackedScene" uid="uid://ccn0wo4ohmbv0" path="res://entities/player/player.tscn" id="2_ljefa"]
-[ext_resource type="Script" uid="uid://c5rnbxf7cnm7o" path="res://entities/interactable_test/interactable_test.gd" id="3_65t83"]
-[ext_resource type="Material" uid="uid://b3cldrwcdhuty" path="res://materials/orange_material.tres" id="4_8lktr"]
+[ext_resource type="PackedScene" uid="uid://ccn0wo4ohmbv0" path="res://FPS Controller/entities/player/player.tscn" id="2_ljefa"]
+[ext_resource type="Script" uid="uid://c5rnbxf7cnm7o" path="res://FPS Controller/entities/interactable_test/interactable_test.gd" id="3_65t83"]
+[ext_resource type="Material" uid="uid://b3cldrwcdhuty" path="res://FPS Controller/materials/orange_material.tres" id="4_8lktr"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_bxatn"]
 
-[sub_resource type="Sky" id="Sky_erxa5"]
+[sub_resource type="Sky" id="Sky_mlevh"]
 sky_material = SubResource("ProceduralSkyMaterial_bxatn")
 
 [sub_resource type="Environment" id="Environment_ljefa"]
-sky = SubResource("Sky_erxa5")
+sky = SubResource("Sky_mlevh")
 tonemap_mode = 2
 ssao_enabled = true
 glow_enabled = true
@@ -31,21 +29,19 @@ adjustment_enabled = true
 adjustment_contrast = 1.05
 adjustment_saturation = 1.1
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ljefa"]
-albedo_texture = ExtResource("1_5kwao")
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_c16q5"]
 metallic_specular = 0.0
 uv1_triplanar = true
 uv1_world_triplanar = true
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_5kwao"]
-material = SubResource("StandardMaterial3D_ljefa")
+material = SubResource("StandardMaterial3D_c16q5")
 size = Vector2(1000, 1000)
 
 [sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_mwv38"]
 points = PackedVector3Array(-500, 0, -500, -500, 0, 500, 500, 0, -500, 500, 0, 500)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mwv38"]
-albedo_texture = ExtResource("1_erxa5")
 metallic_specular = 0.0
 uv1_triplanar = true
 uv1_world_triplanar = true
@@ -98,8 +94,8 @@ shape = SubResource("ConvexPolygonShape3D_5kwao")
 [node name="InteractableTest" type="Area3D" parent="." unique_id=673150180 node_paths=PackedStringArray("mesh")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, 0)
 script = ExtResource("3_65t83")
-mesh = NodePath("MeshInstance3D")
 interaction_text = "Interact (F)"
+mesh = NodePath("MeshInstance3D")
 metadata/_custom_type_script = "uid://gy6m101wg8y5"
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="InteractableTest" unique_id=1607432042]
@@ -110,5 +106,3 @@ mesh = SubResource("BoxMesh_ac262")
 shape = SubResource("BoxShape3D_65t83")
 
 [node name="Player" parent="." unique_id=769471447 instance=ExtResource("2_ljefa")]
-
-[connection signal="interacted" from="InteractableTest" to="InteractableTest" method="_on_interacted"]

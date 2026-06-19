@@ -1,18 +1,17 @@
 [gd_scene format=3 uid="uid://ccn0wo4ohmbv0"]
 
-[ext_resource type="Script" uid="uid://b6r5nirxxwbv1" path="res://entities/player/scripts/player.gd" id="1_abrql"]
-[ext_resource type="Script" uid="uid://ccyxu07850igd" path="res://entities/player/scripts/camera_scripts/camera_controller.gd" id="1_symyc"]
-[ext_resource type="Script" uid="uid://dtysllkbfv2t4" path="res://entities/player/scripts/camera_scripts/camera_effects.gd" id="3_26q78"]
-[ext_resource type="Script" uid="uid://gp6bqju68qbm" path="res://common/state_machine/state_machine.gd" id="3_sglur"]
-[ext_resource type="Script" uid="uid://d10pnp7g3n8et" path="res://entities/player/scripts/states/idle.gd" id="4_bls4j"]
-[ext_resource type="Script" uid="uid://nl5w2556yiwx" path="res://entities/player/scripts/interaction/interaction_ray.gd" id="4_wvtmh"]
-[ext_resource type="Script" uid="uid://bu3taa808pwcf" path="res://entities/player/scripts/states/walk.gd" id="5_fkugw"]
-[ext_resource type="Script" uid="uid://c10iex2h3vjua" path="res://entities/player/scripts/states/run.gd" id="6_8fjmc"]
-[ext_resource type="Script" uid="uid://dn7ctexaafr7b" path="res://entities/player/scripts/states/air.gd" id="7_qiwj3"]
-[ext_resource type="Script" uid="uid://c5stq0yqgk64w" path="res://entities/player/scripts/states/crouch.gd" id="9_bectd"]
-[ext_resource type="Script" uid="uid://drnxktebmux5s" path="res://entities/player/scripts/states/slide.gd" id="11_7thud"]
-[ext_resource type="Texture2D" uid="uid://c57prkyrgljip" path="res://entities/player/art/crosshair.png" id="12_a1qjk"]
-[ext_resource type="Script" uid="uid://du5goysumm1fk" path="res://entities/player/scripts/ui/ui.gd" id="12_j3ovn"]
+[ext_resource type="Script" uid="uid://b6r5nirxxwbv1" path="res://FPS Controller/entities/player/scripts/player.gd" id="1_abrql"]
+[ext_resource type="Script" uid="uid://ccyxu07850igd" path="res://FPS Controller/entities/player/scripts/camera_scripts/camera_controller.gd" id="1_symyc"]
+[ext_resource type="Script" uid="uid://dtysllkbfv2t4" path="res://FPS Controller/entities/player/scripts/camera_scripts/camera_effects.gd" id="3_26q78"]
+[ext_resource type="Script" uid="uid://gp6bqju68qbm" path="res://FPS Controller/common/state_machine/state_machine.gd" id="3_sglur"]
+[ext_resource type="Script" uid="uid://d10pnp7g3n8et" path="res://FPS Controller/entities/player/scripts/states/idle.gd" id="4_bls4j"]
+[ext_resource type="Script" uid="uid://nl5w2556yiwx" path="res://FPS Controller/entities/player/scripts/interaction/interaction_ray.gd" id="4_wvtmh"]
+[ext_resource type="Script" uid="uid://bu3taa808pwcf" path="res://FPS Controller/entities/player/scripts/states/walk.gd" id="5_fkugw"]
+[ext_resource type="Script" uid="uid://c10iex2h3vjua" path="res://FPS Controller/entities/player/scripts/states/run.gd" id="6_8fjmc"]
+[ext_resource type="Script" uid="uid://dn7ctexaafr7b" path="res://FPS Controller/entities/player/scripts/states/air.gd" id="7_qiwj3"]
+[ext_resource type="Script" uid="uid://c5stq0yqgk64w" path="res://FPS Controller/entities/player/scripts/states/crouch.gd" id="9_bectd"]
+[ext_resource type="Script" uid="uid://drnxktebmux5s" path="res://FPS Controller/entities/player/scripts/states/slide.gd" id="11_7thud"]
+[ext_resource type="Script" uid="uid://du5goysumm1fk" path="res://FPS Controller/entities/player/scripts/ui/ui.gd" id="12_j3ovn"]
 
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_sfv1e"]
 margin = 0.02
@@ -284,7 +283,6 @@ offset_bottom = 6.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-texture = ExtResource("12_a1qjk")
 expand_mode = 1
 stretch_mode = 5
 
