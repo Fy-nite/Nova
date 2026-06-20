@@ -19,6 +19,7 @@ public partial class RootLoop : Node3D
     IRenderer renderer;
     IGameService Bootstrap;
     WorldXmlHotReloader xm;
+    DebugGameService debug;
     public override void _Ready()
 	{
 		V12.Core.Networking.BsonConfig.Initialize();
@@ -26,6 +27,7 @@ public partial class RootLoop : Node3D
 		renderer = new V12TwoDog.Renderer(GetTree());
         Bootstrap = new Bootstrap();
 
+        root.Registry.Register("Bootstrap", Bootstrap);
 
         root.Registry.Register("IRenderer", renderer);
         var _input = root.Registry.Get<InputService>();
@@ -35,25 +37,28 @@ public partial class RootLoop : Node3D
 
             root.Registry.Register("InputService", _input);
         }
-        var debug = new DebugGameService();
-
+        debug = new DebugGameService();
+        debug.Initialize(root);
         root.Registry.Register("DebugGameService", debug );
 		root.Initialize();
 		//root.V12Loop();
 		root.CreateWorld("TestWorld","HotReload");
-        var hotreloader = new WorldXmlSourceComponent("hotreload.xml", true);
-        var elem = new Element{Components = { hotreloader }, Name="HotReloadElement"};
-        root.SelectedWorld.AddElement(elem);
-        xm = (WorldXmlHotReloader)root.Registry.Get("HotReloader_TestWorld").ServiceInstance;
-        xm.Initialize();
-        xm._watchers["D:\\git\\V12\\V12TwoDog\\V12TwoDog.Godot\\.godot\\mono\\temp\\bin\\Debug\\hotreload.xml"].Changed += (s, e) => debug._needsUpdate = true;
+
+
+        /// Testing code
+        //var hotreloader = new worldxmlsourcecomponent("hotreload.xml", true);
+        //var elem = new element { components = { hotreloader }, name = "hotreloadelement" };
+        //root.selectedworld.addelement(elem);
+        //xm = (worldxmlhotreloader)root.registry.get("hotreloader_testworld").serviceinstance;
+        //xm.initialize();
+        //xm._watchers["d:\\git\\v12\\v12twodog\\v12twodog.godot\\.godot\\mono\\temp\\bin\\debug\\hotreload.xml"].changed += (s, e) => debug._needsUpdate = true;
 
     }
 
 	// Called every frame. 'delta' is the elapsed time since the previous frame.
 	public override void _Process(double delta)
 	{
-		var inputService = root.Registry.Get<V12.Core.Input.InputService>();
+        var inputService = root.Registry.Get<V12.Core.Input.InputService>();
 		if (inputService != null)
 		{
 			float moveX = 0f;
@@ -106,9 +111,9 @@ public partial class RootLoop : Node3D
 			lookX = Mathf.Clamp(lookX, -1f, 1f);
 			lookY = Mathf.Clamp(lookY, -1f, 1f);
 
-          
-                // ── Debug logging ───────────────────────────────────────────────
-                //GD.Print($"Input: moveX={moveX:F2}, moveY={moveY:F2}, lookX={lookX:F2}, lookY={lookY:F2}");
+
+            // ── Debug logging ───────────────────────────────────────────────
+            GD.Print($"Input: moveX={moveX:F2}, moveY={moveY:F2}, lookX={lookX:F2}, lookY={lookY:F2}");
 
             // ── Send axis events to V12 input system ──────────────────────────
             inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "move_right", Value = moveX > 0 ? moveX : 0f });
@@ -147,7 +152,6 @@ public partial class RootLoop : Node3D
 
 		root.Update((float)delta);
 
-
 		foreach (var service in root.Registry.GetAll<IGameService>())
 			service.Update((float)delta);
 
@@ -159,6 +163,7 @@ public partial class RootLoop : Node3D
 			}
 		
 		renderer.step();
-        xm.Update();
+        //xm.Update();
+        debug.Update((float)delta);
     }
 }
