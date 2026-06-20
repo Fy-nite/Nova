@@ -5,6 +5,12 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="hotreload.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\V12.SampleGame\V12.SampleGame.csproj" />
     <ProjectReference Include="..\..\V12\V12.csproj" />
   </ItemGroup>
 </Project>

@@ -168,6 +168,8 @@ namespace V12TwoDog
 						camera3D.Fov = cameraRenderable.FieldOfView;
 						camera3D.Near = cameraRenderable.NearClip;
 						camera3D.Far = cameraRenderable.FarClip;
+						camera3D.Current = cameraRenderable.IsCurrent;
+						//camera3D.KeepAspect = Camera3D.KeepAspectEnum.KeepHeight;
 					}
 
 					// Update Transform (use Transform for ITransformRenderable, WorldTransform for others)
