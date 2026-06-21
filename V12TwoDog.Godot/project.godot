@@ -16,17 +16,15 @@ config/name="V12TwoDog"
 config/version="1.0.0"
 run/main_scene="uid://hdjvbjy78ms1"
 config/features=PackedStringArray("4.7", "C#")
+run/max_fps=637
 config/icon="uid://c0pjr5qikrm80"
-
-[autoload]
-
-DebugMenu="*uid://cggqb75a8w8r"
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/handheld/orientation=4
+window/vsync/vsync_mode=0
 
 [dotnet]
 
@@ -34,7 +32,7 @@ project/assembly_name="V12TwoDog.Godot"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/debug_menu/plugin.cfg", "res://addons/portals/plugin.cfg", "res://addons/worldml_exporter/plugin.cfg")
+enabled=PackedStringArray("res://addons/debug_menu/plugin.cfg", "res://addons/godot_mcp/plugin.cfg", "res://addons/portals/plugin.cfg", "res://addons/worldml_exporter/plugin.cfg")
 
 [input]
 

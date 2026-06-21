@@ -1,0 +1,41 @@
+This idea replaces the typical non-diegetic dashboard style UI of typical VR sandbox applications, with a new novel diagetic in world UI concept.
+Main Philosophy
+
+The main idea of this novel UI is centered around making the UI exist in a physical space rather then being a typical flat UI. This will enhance immersion and create a feeling of real interactions behind user actions.
+Concepts
+Pocket Dimension
+
+The primary feature of this UI system is a private "pocket dimension" that the user can open a portal to at any time.
+
+This "pocket dimension" will allow access to the features that would typically exist within a typical platforms "dashboard" such as that of Resonite and VRChat. The "pocket dimension" could manifest in a variety of ways. The form of the "pocket dimension" would be able to be customized by the user.
+Room Concept
+
+The pocket dimension could manifest as a doorway into a small room.
+As for the items in the room.
+
+    On the other side of the door you would have the option to close the door behind you which would allow you to have the world unload in the background out of site.
+    The room would contain a vertical carousel to store items as your inventory.
+        This system would be index able via a data terminal.
+    There will be a rack of equipment that represents the modules that you have in the game.
+        The mods are packed and stored in game as these physical rack mount units.
+        There will be cables on the back of the rack that represent the dataflow between the modules.
+        There will be two types of modules.
+            Modules that are part of our sandboxed scripting system
+            Modules that are running as managed code inside of C#.
+                The managed code modules would not be able to be passed around inside of the game. The sandboxed modules would be allowed to pass around as
+        Some of these modules could represent core parts of the game engine. Such as:
+            Renderer
+            UI management systems
+                Which would potentially replace all of this when restarting the game
+            Networking systems
+            World data management systems
+                Like world saving
+            Input systems
+            Physics systems
+            Locomotion systems
+        The front panel of this rack equipment would be able to represent the settings of any such modules
+        Besides the personal modules there would be an option to have such a rack inside the world.
+            This could be used by players to create there own systems managed by the creators of a world.
+            There could be an option to have a similar pocket dimension that would allow for this rack to not exist in the world that it effects
+                This pocket dimension would have an option to have access controls
+    There could be a PC in this room that could be used for tasks like messaging users

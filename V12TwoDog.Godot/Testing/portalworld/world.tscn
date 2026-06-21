@@ -1,9 +1,9 @@
 [gd_scene format=3 uid="uid://c67xlhgmqbjit"]
 
 [ext_resource type="Script" uid="uid://c5rnbxf7cnm7o" path="res://FPS Controller/entities/interactable_test/interactable_test.gd" id="1_72rlg"]
+[ext_resource type="Script" uid="uid://qerehhswyhbs" path="res://addons/worldml_exporter/nodes/V12Svg.gd" id="1_bs5q2"]
 [ext_resource type="Material" uid="uid://b3cldrwcdhuty" path="res://FPS Controller/materials/orange_material.tres" id="2_l4x4o"]
-[ext_resource type="PackedScene" uid="uid://ccn0wo4ohmbv0" path="res://FPS Controller/entities/player/player.tscn" id="3_bs5q2"]
-[ext_resource type="PackedScene" uid="uid://cggqb75a8w8r" path="res://addons/debug_menu/debug_menu.tscn" id="4_l4x4o"]
+[ext_resource type="Material" uid="uid://by5encxbbc8ur" path="res://prototype_textures/materials/blue_material.tres" id="4_l4x4o"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_bxatn"]
 
@@ -33,18 +33,6 @@ adjustment_saturation = 1.1
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_72rlg"]
 width = 628
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_c16q5"]
-metallic_specular = 0.0
-uv1_triplanar = true
-uv1_world_triplanar = true
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_5kwao"]
-material = SubResource("StandardMaterial3D_c16q5")
-size = Vector2(1000, 1000)
-
-[sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_mwv38"]
-points = PackedVector3Array(-500, 0, -500, -500, 0, 500, 500, 0, -500, 500, 0, 500)
-
 [sub_resource type="BoxMesh" id="BoxMesh_ac262"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_65t83"]
@@ -56,13 +44,6 @@ metadata/_edit_lock_ = true
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1748113669]
 environment = SubResource("Environment_ljefa")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="WorldEnvironment" unique_id=1395289630]
-transform = Transform3D(0.70710665, 0.5000002, -0.49999997, 0, 0.70710665, 0.7071069, 0.7071069, -0.49999997, 0.49999982, 0, 0, 0)
-visible = false
-light_energy = 0.5
-light_bake_mode = 1
-shadow_enabled = true
-
 [node name="AreaLight3D" type="AreaLight3D" parent="WorldEnvironment" unique_id=814903386]
 transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 8.824444, -0.063111305)
 light_color = Color(1, 0, 1, 1)
@@ -73,16 +54,6 @@ area_range = 391.759
 area_attenuation = -0.03
 area_size = Vector2(36.75, 31.918)
 area_texture = SubResource("NoiseTexture2D_72rlg")
-
-[node name="Ground" type="StaticBody3D" parent="." unique_id=1441076186]
-collision_mask = 0
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=1764776310]
-mesh = SubResource("PlaneMesh_5kwao")
-skeleton = NodePath("../..")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=477623768]
-shape = SubResource("ConvexPolygonShape3D_mwv38")
 
 [node name="InteractableTest" type="Area3D" parent="." unique_id=673150180]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, 0)
@@ -97,14 +68,8 @@ mesh = SubResource("BoxMesh_ac262")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="InteractableTest" unique_id=1808408522]
 shape = SubResource("BoxShape3D_65t83")
 
-[node name="Player" parent="." unique_id=769471447 instance=ExtResource("3_bs5q2")]
-collision_mask = 2147483649
-jump_velocity = 6.6850000000000005
-gravity_multiplier_rising = 1.845
-gravity_multiplier_falling = 2.65
-
 [node name="CSGRoot" type="CSGCombiner3D" parent="." unique_id=503339379]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, -3.9999998)
 use_collision = true
 
 [node name="BackWall" type="CSGBox3D" parent="CSGRoot" unique_id=11671312]
@@ -138,4 +103,20 @@ transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, -2.9
 use_collision = true
 size = Vector3(7.9, 2, 0.12646484)
 
-[node name="CanvasLayer" parent="." unique_id=414397422 instance=ExtResource("4_l4x4o")]
+[node name="Node3D" type="Node3D" parent="." unique_id=1272538464]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.90000004, -1.6)
+
+[node name="V12Svg" type="Node" parent="Node3D" unique_id=702265836]
+script = ExtResource("1_bs5q2")
+svg_file = "uid://b7glk7lrjwkmp"
+
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=903693513]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -4.05)
+size = Vector3(24, 0.5, 23.7)
+material = ExtResource("4_l4x4o")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1395289630]
+transform = Transform3D(0.70710665, 0.5000002, -0.5, 0, 0.70710665, 0.7071069, 0.7071069, -0.5, 0.4999998, 0, 0, 0)
+light_energy = 0.5
+light_bake_mode = 1
+shadow_enabled = true

@@ -9,6 +9,7 @@ using V12.Components;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Input;
+using V12.Core.Audio;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.Core.Networking;
@@ -22,6 +23,7 @@ public partial class RootLoop : Node3D
     IRenderer renderer;
     IGameService Bootstrap;
     WorldXmlHotReloader xm;
+    GodotAudioPlayer audioPlayer;
     DebugGameService debug;
 	readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
 	Vector2 _mouseLook;
@@ -42,7 +44,7 @@ public partial class RootLoop : Node3D
         Input.MouseMode = captured ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
         _mouseCaptured = captured;
     }
-
+    SteamAudioService s = new SteamAudioService();
     public override void _Ready()
 	{
 		V12.Core.Networking.BsonConfig.Initialize();
@@ -53,6 +55,12 @@ public partial class RootLoop : Node3D
 
         root.Registry.Register("Bootstrap", Bootstrap);
 
+        root.Registry.Register("SteamAudioService", s);
+        s.Initialize(root);
+        audioPlayer = new GodotAudioPlayer();
+        audioPlayer.Initialize(root);
+        root.Registry.Register("IAudioPlayer", audioPlayer);
+        AddChild(audioPlayer);
         root.Registry.Register("IRenderer", renderer);
         var _input = root.Registry.Get<InputService>();
         if (_input == null )
@@ -67,6 +75,11 @@ public partial class RootLoop : Node3D
 
 		root.CreateWorld("TestWorld");
 		root.Initialize();
+
+        // Initialize physics services (registered during Bootstrap but missed by GameRoot.Initialize's foreach)
+        root.Registry.Get<V12.Core.Systems.PhysicsService>()?.Initialize(root);
+        root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
+        root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
 
         // Capture mouse for look control (deferred so the scene is ready)
         CallDeferred(nameof(SetMouseCaptured), true);
@@ -245,7 +258,10 @@ public partial class RootLoop : Node3D
 
 		
 
-		root.Update((float)delta);
+        s.Update((float)delta);
+        audioPlayer.Update((float)delta);
+
+        root.Update((float)delta);
 
 		List<IRenderable> renderables = root.GetAllRenderables();
 		

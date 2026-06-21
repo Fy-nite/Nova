@@ -1,0 +1,31 @@
+[gd_scene format=3 uid="uid://dncuc5id53pjw"]
+
+[ext_resource type="AudioStream" uid="uid://cj14bd4lb2ruy" path="res://audio/low_hum.wav" id="1_7q3vr"]
+[ext_resource type="AudioStream" uid="uid://10kdiw87mcxp" path="res://audio/high_beep.wav" id="2_aond7"]
+[ext_resource type="AudioStream" uid="uid://caheqx7vljd4d" path="res://audio/test_tone.wav" id="3_c5ya6"]
+
+[node name="test_audio" type="Node3D" unique_id=1126972440]
+
+[node name="LowHum" type="Node3D" parent="." unique_id=370414745]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1.5, -3)
+
+[node name="AudioPlayer" type="AudioStreamPlayer3D" parent="LowHum" unique_id=2102162894]
+stream = ExtResource("1_7q3vr")
+autoplay = true
+max_distance = 20.0
+
+[node name="HighBeep" type="Node3D" parent="." unique_id=1567040261]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1.5, -3)
+
+[node name="AudioPlayer" type="AudioStreamPlayer3D" parent="HighBeep" unique_id=1089476794]
+stream = ExtResource("2_aond7")
+autoplay = true
+max_distance = 15.0
+
+[node name="TestTone" type="Node3D" parent="." unique_id=2026111585]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -1)
+
+[node name="AudioPlayer" type="AudioStreamPlayer3D" parent="TestTone" unique_id=561631610]
+stream = ExtResource("3_c5ya6")
+autoplay = true
+max_distance = 10.0

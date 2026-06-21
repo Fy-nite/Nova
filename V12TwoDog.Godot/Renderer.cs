@@ -122,11 +122,47 @@ namespace V12TwoDog
 									item.Mesh = new SphereMesh();
 									((SphereMesh)item.Mesh).Radius = meshComp.Width;
 									break;
+								case MeshShape.Custom:
+								{
+									var meshPoints = meshComp.MeshPoints;
+									if (meshPoints != null && meshPoints.Length >= 3)
+									{
+										var verts = new Vector3[meshPoints.Length / 3];
+										for (int i = 0; i < verts.Length; i++)
+										{
+											verts[i] = new Vector3(
+												(float)meshPoints[i * 3],
+												(float)meshPoints[i * 3 + 1],
+												(float)meshPoints[i * 3 + 2]
+											);
+										}
+
+										var arrays = new Variant[13];
+										arrays[0] = verts;
+
+										var indices = meshComp.Indices;
+										if (indices != null && indices.Length > 0)
+										{
+											var idx = new int[indices.Length];
+											for (int i = 0; i < idx.Length; i++)
+												idx[i] = (int)indices[i];
+											arrays[12] = idx;
+										}
+
+										item.Mesh = new ArrayMesh();
+										((ArrayMesh)item.Mesh).AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, new global::Godot.Collections.Array(arrays));
+									}
+									break;
+								}
 							}
 						}
 						node = item;
 					}
 					else if (renderable is ISpriteRenderable)
+					{
+						node = new Sprite3D();
+					}
+					else if (renderable is ISvgRenderable)
 					{
 						node = new Sprite3D();
 					}
@@ -177,6 +213,8 @@ namespace V12TwoDog
 						else if (light3D is SpotLight3D spot)
 						{
 							spot.SpotRange = light.Range;
+							spot.SpotAngle = light.Angle;
+							spot.SpotAngleAttenuation = light.SpotSoftness;
 						}
 					}
 					else if (renderable is ISpriteRenderable spriteRenderable && node is Sprite3D sprite3D)
@@ -188,6 +226,19 @@ namespace V12TwoDog
 						sprite3D.Scale = new Vector3(spriteRenderable.Size.X, spriteRenderable.Size.Y, 1.0f);
 						var col = spriteRenderable.Tint;
 						sprite3D.Modulate = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
+					}
+					else if (renderable is ISvgRenderable svgRenderable && node is Sprite3D svgSprite)
+					{
+						if (!string.IsNullOrEmpty(svgRenderable.SvgContent))
+						{
+							var svgBytes = System.Text.Encoding.UTF8.GetBytes(svgRenderable.SvgContent);
+							var img = new Image();
+							img.LoadSvgFromBuffer(svgBytes, 1.0f);
+							svgSprite.Texture = ImageTexture.CreateFromImage(img);
+						}
+						svgSprite.Scale = new Vector3(svgRenderable.Size.X, svgRenderable.Size.Y, 1.0f);
+						var tint = svgRenderable.Tint;
+						svgSprite.Modulate = new Color(tint.R / 255f, tint.G / 255f, tint.B / 255f);
 					}
 					else if (renderable is ITextRenderable textRenderable && node is Label3D label3D)
 					{
@@ -219,6 +270,7 @@ namespace V12TwoDog
 					node.Transform = new Transform3D(basis, origin);
 				}
 			}
+
 		}
 
 		public void QueueItems(RenderPacket packet)

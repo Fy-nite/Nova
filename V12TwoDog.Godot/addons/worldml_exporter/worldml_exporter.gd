@@ -139,23 +139,19 @@ func _append_element_for_node(node: Node, indent: int) -> String:
 		if node is OmniLight3D:
 			var l = node
 			var lc = l.light_color
-			out += "%s\t<PointLightComponent colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" range=\"%.3f\" energy=\"%.3f\" />\n" \
-				% [ind, lc.r, lc.g, lc.b, l.omni_range, l.light_energy]
+			out += "%s\t<GenericLightComponent Type=\"Point\" colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" range=\"%.3f\" energy=\"%.3f\" shadowEnabled=\"%s\" />\n" \
+				% [ind, lc.r, lc.g, lc.b, l.omni_range, l.light_energy, l.shadow_enabled]
 
 		if node is SpotLight3D:
 			var l = node
 			var lc = l.light_color
-			# Calculate world-space forward direction (-Z basis) so the light
-			# orientation is preserved even when full rotation attributes are
-			# not consumed by the importer.
-			var forward = -n3d.global_transform.basis.z.normalized()
-			out += "%s\t<SpotLightComponent colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" range=\"%.3f\" energy=\"%.3f\" angle=\"%.2f\" spotSoftness=\"%.3f\" dirX=\"%.3f\" dirY=\"%.3f\" dirZ=\"%.3f\" />\n" \
-				% [ind, lc.r, lc.g, lc.b, l.spot_range, l.light_energy, l.spot_angle, l.spot_angle_attenuation, forward.x, forward.y, forward.z]
+			out += "%s\t<GenericLightComponent Type=\"Spot\" colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" range=\"%.3f\" energy=\"%.3f\" angle=\"%.2f\" spotSoftness=\"%.3f\" shadowEnabled=\"%s\" />\n" \
+				% [ind, lc.r, lc.g, lc.b, l.spot_range, l.light_energy, l.spot_angle, l.spot_angle_attenuation, l.shadow_enabled]
 
 		if node is DirectionalLight3D:
 			var l = node
 			var lc = l.light_color
-			out += "%s\t<DirectionalLightComponent colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" energy=\"%.3f\" shadowEnabled=\"%s\" />\n" \
+			out += "%s\t<GenericLightComponent colorR=\"%.3f\" colorG=\"%.3f\" colorB=\"%.3f\" energy=\"%.3f\" shadowEnabled=\"%s\" />\n" \
 				% [ind, lc.r, lc.g, lc.b, l.light_energy, l.shadow_enabled]
 
 		# ── Camera ────────────────────────────────────────────────────────────
@@ -210,8 +206,9 @@ func _append_element_for_node(node: Node, indent: int) -> String:
 			var rpath = ""
 			if au.stream != null:
 				rpath = au.stream.resource_path
-			out += "%s\t<AudioSourceComponent resourcePath=\"%s\" volume=\"%.2f\" pitch=\"%.3f\" autoplay=\"%s\" maxDistance=\"%.2f\" />\n" \
-				% [ind, rpath, au.volume_db, au.pitch_scale, au.autoplay, au.max_distance]
+			var lin_vol = pow(10.0, au.volume_db / 20.0)
+			out += "%s\t<AudioSourceComponent AudioClipPath=\"%s\" Volume=\"%.2f\" Pitch=\"%.3f\" Loop=\"true\" Autoplay=\"%s\" MaxDistance=\"%.2f\" />\n" \
+					% [ind, rpath, lin_vol, au.pitch_scale, au.autoplay, au.max_distance]
 
 		# Recurse children (skip collision-only nodes — already harvested above,
 		# and skip data-attachment V12 custom nodes — already merged above).
@@ -305,36 +302,49 @@ func _csg_collider(node: Node, ind: String, shape: String,
 func _harvest_collider(node: Node, ind: String) -> String:
 	var body_classes = ["StaticBody3D", "RigidBody3D", "AnimatableBody3D",
 						"CharacterBody3D", "Area3D"]
+	# Check children for physics body nodes
 	for child in node.get_children():
-		if not (child.get_class() in body_classes):
+		if child.get_class() in body_classes:
+			var result = _collider_xml_from_body(child, ind)
+			if result != "":
+				return result
+	# Also check parent — typical Godot scenes have the visual node as child
+	# of a physics body (e.g. StaticBody3D > MeshInstance3D + CollisionShape3D).
+	var parent = node.get_parent()
+	if parent != null and parent.get_class() in body_classes:
+		return _collider_xml_from_body(parent, ind)
+	return ""
+
+## Generate ColliderComponent XML from a physics body node (StaticBody3D, etc.)
+## by scanning its CollisionShape3D children.
+func _collider_xml_from_body(body: Node, ind: String) -> String:
+	var is_trigger = body.get_class() == "Area3D"
+	for shape_node in body.get_children():
+		if not (shape_node is CollisionShape3D):
 			continue
-		var is_trigger = child.get_class() == "Area3D"
-		for shape_node in child.get_children():
-			if not (shape_node is CollisionShape3D):
-				continue
-			var sh = shape_node.shape
-			if sh == null:
-				continue
-			var shape_cls = sh.get_class()
-			var w = 1.0
-			var h = 1.0
-			var d = 1.0
-			var shape_name = "Box"
-			if shape_cls == "BoxShape3D":
-				var sz = sh.size
-				w = sz.x; h = sz.y; d = sz.z
-				shape_name = "Box"
-			elif shape_cls == "SphereShape3D":
-				w = sh.radius * 2.0; h = w; d = w
-				shape_name = "Sphere"
-			elif shape_cls == "CapsuleShape3D":
-				w = sh.radius * 2.0; h = sh.height; d = w
-				shape_name = "Capsule"
-			elif shape_cls == "CylinderShape3D":
-				w = sh.radius * 2.0; h = sh.height; d = w
-				shape_name = "Cylinder"
-			return "%s\t<ColliderComponent Shape=\"%s\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" isTrigger=\"%s\" />\n" \
-				% [ind, shape_name, w, h, d, is_trigger]
+		var sh = shape_node.shape
+		if sh == null:
+			continue
+		var shape_cls = sh.get_class()
+		var w = 1.0
+		var h = 1.0
+		var d = 1.0
+		var shape_name = "Box"
+		if shape_cls == "BoxShape3D":
+			var sz = sh.size
+			w = sz.x; h = sz.y; d = sz.z
+			shape_name = "Box"
+		elif shape_cls == "SphereShape3D":
+			w = sh.radius * 2.0; h = w; d = w
+			shape_name = "Sphere"
+		elif shape_cls == "CapsuleShape3D":
+			w = sh.radius * 2.0; h = sh.height; d = w
+			shape_name = "Capsule"
+		elif shape_cls == "CylinderShape3D":
+			w = sh.radius * 2.0; h = sh.height; d = w
+			shape_name = "Cylinder"
+		return "%s\t<ColliderComponent Shape=\"%s\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" isTrigger=\"%s\" />\n" \
+			% [ind, shape_name, w, h, d, is_trigger]
 	return ""
 
 ## Emit named MeshComponent + MeshRenderer wrapper (matches Procedurals.cs pattern).
