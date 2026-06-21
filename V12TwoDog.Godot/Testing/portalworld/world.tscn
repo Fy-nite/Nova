@@ -49,10 +49,6 @@ points = PackedVector3Array(-500, 0, -500, -500, 0, 500, 500, 0, -500, 500, 0, 5
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_65t83"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_72rlg"]
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_l4x4o"]
-
 [node name="Prototype" type="Node3D" unique_id=1831033359]
 metadata/_edit_group_ = true
 metadata/_edit_lock_ = true
@@ -107,73 +103,39 @@ jump_velocity = 6.6850000000000005
 gravity_multiplier_rising = 1.845
 gravity_multiplier_falling = 2.65
 
-[node name="WorldRoot" type="Node3D" parent="." unique_id=318783846]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -5)
+[node name="CSGRoot" type="CSGCombiner3D" parent="." unique_id=503339379]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8)
+use_collision = true
 
-[node name="Box" type="StaticBody3D" parent="WorldRoot" unique_id=1295698829]
-transform = Transform3D(5.970977, 0, 0, 0, 2.7683694, 0, 0, 0, 0.14266992, 0, 1.4244626, -13.470985)
-collision_mask = 0
+[node name="BackWall" type="CSGBox3D" parent="CSGRoot" unique_id=11671312]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.05401683, 1, -3.932127)
+use_collision = true
+size = Vector3(6.1, 2, 0.12646484)
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box" unique_id=1028671640]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
+[node name="Roof" type="CSGBox3D" parent="CSGRoot" unique_id=130716786]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.05401683, 2.1, 0.004640579)
+use_collision = true
+size = Vector3(6.1, 0.2, 8)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box" unique_id=73483569]
-shape = SubResource("BoxShape3D_l4x4o")
+[node name="FrontWall" type="CSGBox3D" parent="CSGRoot" unique_id=496298263]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0040167794, 1, 3.8678737)
+use_collision = true
+size = Vector3(6, 2, 0.12646484)
 
-[node name="Box2" type="StaticBody3D" parent="WorldRoot" unique_id=184195855]
-transform = Transform3D(-4.902516e-07, 0, -0.1426699, 0, 2.7683697, 0, 11.215649, 0, -6.2362995e-09, 3, 1.4244626, -8.032662)
-collision_mask = 0
+[node name="Door" type="CSGBox3D" parent="CSGRoot/FrontWall" unique_id=215705853]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.104168855, -0.19999999, 0)
+operation = 2
+use_collision = true
+size = Vector3(1.7, 1.6, 0.12646484)
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box2" unique_id=624156623]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
+[node name="RightWall" type="CSGBox3D" parent="CSGRoot" unique_id=1619027460]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 3.0409446, 1, 0.061777074)
+use_collision = true
+size = Vector3(7.8638673, 2, 0.12646484)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box2" unique_id=670961948]
-shape = SubResource("BoxShape3D_l4x4o")
-
-[node name="Box3" type="StaticBody3D" parent="WorldRoot" unique_id=752769167]
-transform = Transform3D(-5.0915907e-07, 0, -0.1426699, 0, 2.7683697, 0, 11.648203, 0, -6.2362995e-09, -3, 1.4244626, -8.14529)
-collision_mask = 0
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box3" unique_id=1535901819]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box3" unique_id=1665810267]
-shape = SubResource("BoxShape3D_l4x4o")
-
-[node name="Box4" type="StaticBody3D" parent="WorldRoot" unique_id=1329487389]
-transform = Transform3D(6.157806e-14, 6.126756, 6.2362995e-09, 4.926718e-07, -2.6780904e-07, 0.14266992, 11.271016, 0, -6.2362995e-09, 0, 2.807453, -7.910781)
-collision_mask = 0
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box4" unique_id=954662286]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box4" unique_id=446637223]
-shape = SubResource("BoxShape3D_l4x4o")
-
-[node name="Box5" type="StaticBody3D" parent="WorldRoot" unique_id=1337268187]
-transform = Transform3D(2.2947576, 3.4993756e-22, 1.3322676e-15, 8.152616e-15, 2.6477966, -4.440892e-16, -2.1845984e-14, -7.611246e-22, 0.14266993, 1.7480874, 1.4122902, -2.9635239)
-collision_mask = 0
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box5" unique_id=1851611442]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box5" unique_id=2036609111]
-shape = SubResource("BoxShape3D_l4x4o")
-
-[node name="Box6" type="StaticBody3D" parent="WorldRoot" unique_id=833498039]
-transform = Transform3D(2.439013, 3.4993756e-22, 1.3322676e-15, 8.665114e-15, 2.6477966, -4.440892e-16, -2.3219289e-14, -7.611246e-22, 0.14266993, -1.6900463, 1.4122902, -3.0147266)
-collision_mask = 0
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="WorldRoot/Box6" unique_id=1260263421]
-mesh = SubResource("BoxMesh_72rlg")
-skeleton = NodePath("../../..")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="WorldRoot/Box6" unique_id=1174268372]
-shape = SubResource("BoxShape3D_l4x4o")
+[node name="CSGBox3D4" type="CSGBox3D" parent="CSGRoot" unique_id=73386657]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, -2.959056, 1, 0.07984352)
+use_collision = true
+size = Vector3(7.9, 2, 0.12646484)
 
 [node name="CanvasLayer" parent="." unique_id=414397422 instance=ExtResource("4_l4x4o")]

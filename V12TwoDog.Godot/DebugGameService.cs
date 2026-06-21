@@ -23,15 +23,23 @@ namespace V12TwoDog
 
         public void Update(float deltaTime)
         {
-            CheckWorldBinding();
-            UpdateDebugNodes();
+            if (_needsUpdate)
+            {
+                CheckWorldBinding();
+                UpdateDebugNodes();
+                _needsUpdate = false;
+            }
         }
 
         public void Update(GameRoot gameRoot)
         {
             _gameRoot = gameRoot;
-            CheckWorldBinding();
-            UpdateDebugNodes();
+            if (_needsUpdate)
+            {
+                CheckWorldBinding();
+                UpdateDebugNodes();
+                _needsUpdate = false;
+            }
         }
 
         private void CheckWorldBinding()

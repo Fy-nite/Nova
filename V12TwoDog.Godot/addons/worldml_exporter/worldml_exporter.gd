@@ -93,28 +93,24 @@ func _append_element_for_node(node: Node, indent: int) -> String:
 			out += "%s\t<SpawnPointComponent />\n" % ind
 
 		# ── Mesh ─────────────────────────────────────────────────────────────
-		# CSG primitives
+		# CSG primitives (emit named MeshComponent + MeshRenderer wrapper)
 		if cls == "CSGBox3D":
 			var s = node.size
-			out += "%s\t<MeshComponent Shape=\"Box\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-				% [ind, s.x, s.y, s.z]
+			out += _mesh_components(ind, "csg_mesh", "Box", s.x, s.y, s.z)
 			out += _csg_collider(node, ind, "Box", s.x, s.y, s.z)
 		elif cls == "CSGSphere3D":
 			var r = node.radius
-			out += "%s\t<MeshComponent Shape=\"Sphere\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-				% [ind, r * 2.0, r * 2.0, r * 2.0]
+			out += _mesh_components(ind, "csg_mesh", "Sphere", r * 2.0, r * 2.0, r * 2.0)
 			out += _csg_collider(node, ind, "Sphere", r * 2.0, r * 2.0, r * 2.0)
 		elif cls == "CSGCylinder3D":
 			var cr = node.radius
 			var ch = node.height
-			out += "%s\t<MeshComponent Shape=\"Cylinder\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-				% [ind, cr * 2.0, ch, cr * 2.0]
+			out += _mesh_components(ind, "csg_mesh", "Cylinder", cr * 2.0, ch, cr * 2.0)
 			out += _csg_collider(node, ind, "Cylinder", cr * 2.0, ch, cr * 2.0)
 		elif cls == "CSGCapsule3D":
 			var r2 = node.radius
 			var h2 = node.height
-			out += "%s\t<MeshComponent Shape=\"Capsule\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-				% [ind, r2 * 2.0, h2, r2 * 2.0]
+			out += _mesh_components(ind, "csg_mesh", "Capsule", r2 * 2.0, h2, r2 * 2.0)
 			out += _csg_collider(node, ind, "Capsule", r2 * 2.0, h2, r2 * 2.0)
 		elif cls == "CSGPlane3D":
 			var psz = node.size
@@ -341,7 +337,15 @@ func _harvest_collider(node: Node, ind: String) -> String:
 				% [ind, shape_name, w, h, d, is_trigger]
 	return ""
 
-## Extract MeshComponent + MaterialComponent from a MeshInstance3D.
+## Emit named MeshComponent + MeshRenderer wrapper (matches Procedurals.cs pattern).
+func _mesh_components(ind: String, mesh_name: String, shape: String, w: float, h: float, d: float) -> String:
+	return (
+		'%s\t<Component type="MeshComponent" name="%s" Shape="%s" Width="%.3f" Height="%.3f" Depth="%.3f" />\n'
+		+ '%s\t<Component type="MeshRenderer" Mesh="%s" />\n'
+	) % [ind, mesh_name, shape, w, h, d, ind, mesh_name]
+
+
+## Extract MeshComponent + MeshRenderer + MaterialComponent from a MeshInstance3D.
 func _mesh_instance_components(node: MeshInstance3D, ind: String) -> String:
 	var out = ""
 	var mesh = node.mesh
@@ -349,24 +353,23 @@ func _mesh_instance_components(node: MeshInstance3D, ind: String) -> String:
 		return out
 
 	var mcls = mesh.get_class()
+	var shape_name = ""
+	var w = 1.0; var h = 1.0; var d = 1.0
 	if mcls == "BoxMesh":
 		var sz = mesh.size
-		out += "%s\t<MeshComponent Shape=\"Box\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-			% [ind, sz.x, sz.y, sz.z]
+		shape_name = "Box"; w = sz.x; h = sz.y; d = sz.z
 	elif mcls == "SphereMesh":
-		out += "%s\t<MeshComponent Shape=\"Sphere\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-			% [ind, mesh.radius * 2.0, mesh.height, mesh.radius * 2.0]
+		shape_name = "Sphere"; w = mesh.radius * 2.0; h = mesh.height; d = mesh.radius * 2.0
 	elif mcls == "CapsuleMesh":
-		out += "%s\t<MeshComponent Shape=\"Capsule\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-			% [ind, mesh.radius * 2.0, mesh.height, mesh.radius * 2.0]
+		shape_name = "Capsule"; w = mesh.radius * 2.0; h = mesh.height; d = mesh.radius * 2.0
 	elif mcls == "CylinderMesh":
-		out += "%s\t<MeshComponent Shape=\"Cylinder\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-			% [ind, mesh.top_radius * 2.0, mesh.height, mesh.top_radius * 2.0]
+		shape_name = "Cylinder"; w = mesh.top_radius * 2.0; h = mesh.height; d = mesh.top_radius * 2.0
 	elif mcls == "PlaneMesh":
 		var sz2 = mesh.size
-		out += "%s\t<MeshComponent Shape=\"Plane\" Width=\"%.3f\" Height=\"%.3f\" Depth=\"%.3f\" />\n" \
-			% [ind, sz2.x, 0.0, sz2.y]
-	# else: irregular mesh — skip MeshComponent, still export material
+		shape_name = "Plane"; w = sz2.x; h = 0.0; d = sz2.y
+
+	if shape_name != "":
+		out += _mesh_components(ind, "mesh_data", shape_name, w, h, d)
 
 	# MaterialComponent from surface 0 override or mesh material
 	var mat = node.get_surface_override_material(0)

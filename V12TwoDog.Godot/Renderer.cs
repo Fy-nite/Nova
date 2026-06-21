@@ -102,15 +102,23 @@ namespace V12TwoDog
 					else if (renderable is IMeshRenderable meshRenderable)
 					{
 						var item = new MeshInstance3D();
-						if (meshRenderable is V12.Components.MeshComponent meshComp)
+
+						// Extract shape data — MeshComponent directly, or through MeshRenderer wrapper
+						MeshComponent meshComp = null;
+						if (meshRenderable is MeshComponent mc)
+							meshComp = mc;
+						else if (meshRenderable is V12.Components.Renderables.MeshRenderer mr && mr.Mesh is MeshComponent mc2)
+							meshComp = mc2;
+
+						if (meshComp != null)
 						{
 							switch (meshComp.Shape)
 							{
-								case V12.Components.MeshShape.Box:
+								case MeshShape.Box:
 									item.Mesh = new BoxMesh();
 									((BoxMesh)item.Mesh).Size = new Vector3(meshComp.Width, meshComp.Height, meshComp.Depth);
 									break;
-								case V12.Components.MeshShape.Sphere:
+								case MeshShape.Sphere:
 									item.Mesh = new SphereMesh();
 									((SphereMesh)item.Mesh).Radius = meshComp.Width;
 									break;

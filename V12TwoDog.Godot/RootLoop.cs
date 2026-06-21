@@ -3,6 +3,7 @@ using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using V12.Components;
 using V12.Core;
@@ -22,7 +23,26 @@ public partial class RootLoop : Node3D
     IGameService Bootstrap;
     WorldXmlHotReloader xm;
     DebugGameService debug;
-    readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
+	readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
+	Vector2 _mouseLook;
+	float _mouseSensitivity = 0.002f;
+	bool _mouseCaptured;
+
+    public override void _Input(Godot.InputEvent @event)
+    {
+        if (@event is Godot.InputEventMouseMotion motion)
+        {
+            _mouseLook.X += motion.Relative.X;
+            _mouseLook.Y += motion.Relative.Y;
+        }
+    }
+
+    void SetMouseCaptured(bool captured)
+    {
+        Input.MouseMode = captured ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+        _mouseCaptured = captured;
+    }
+
     public override void _Ready()
 	{
 		V12.Core.Networking.BsonConfig.Initialize();
@@ -47,6 +67,9 @@ public partial class RootLoop : Node3D
 
 		root.CreateWorld("TestWorld");
 		root.Initialize();
+
+        // Capture mouse for look control (deferred so the scene is ready)
+        CallDeferred(nameof(SetMouseCaptured), true);
 
 
         /// Testing code
@@ -81,7 +104,7 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionPressed("look_up")) lookY += 1f;
 			if (Input.IsActionPressed("look_down")) lookY -= 1f;
 
-			// ── Analog stick input (gamepad) ──────────────────────────────────
+            // ── Analog stick input (gamepad) ──────────────────────────────────
 			// Left stick: movement
 			float stickLX = Input.GetJoyAxis(0, JoyAxis.LeftX);  // -1 left, +1 right
 			float stickLY = Input.GetJoyAxis(0, JoyAxis.LeftY);  // -1 up,   +1 down
@@ -89,6 +112,31 @@ public partial class RootLoop : Node3D
 			// Right stick: camera look
 			float stickRX = Input.GetJoyAxis(0, JoyAxis.RightX); // -1 left, +1 right
 			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY); // -1 up,   +1 down
+
+            // ── Mouse look (Y inverted, applied directly bypassing ActionMap clamp) ──
+            if (_mouseCaptured && _mouseLook != Vector2.Zero)
+            {
+                float ms = 0.002f; // rad/pixel
+                var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+                if (player != null)
+                {
+                    var playerT = player.GetComponent<V12.Components.TransformComponent>();
+                    if (playerT != null)
+                        playerT.RY += -_mouseLook.X * ms;
+
+                    var cam = player.FindChildByName("PlayerCamera3D");
+                    if (cam != null)
+                    {
+                        var camT = cam.GetComponent<V12.Components.TransformComponent>();
+                        if (camT != null)
+                        {
+                            float newPitch = camT.RX + (-_mouseLook.Y) * ms;
+                            camT.RX = Math.Clamp(newPitch, -1.520f, 1.520f); // ~±87°
+                        }
+                    }
+                }
+                _mouseLook = Vector2.Zero;
+            }
             //Console.WriteLine($"Raw stick input: LX={stickLX:F2}, LY={stickLY:F2}, RX={stickRX:F2}, RY={stickRY:F2}");
             // Apply deadzone (Godot may already apply one, but this is safety)
             const float deadzone = 0.15f;
@@ -109,11 +157,9 @@ public partial class RootLoop : Node3D
 				lookY = -stickRY; // invert: stick down is +Y, but look-up should be positive
 			}
 
-			// Clamp to [-1, 1]
+			// Clamp move to [-1, 1]; look passes through unclamped (mouse needs full range)
 			moveX = Mathf.Clamp(moveX, -1f, 1f);
 			moveY = Mathf.Clamp(moveY, -1f, 1f);
-			lookX = Mathf.Clamp(lookX, -1f, 1f);
-			lookY = Mathf.Clamp(lookY, -1f, 1f);
 
 
             // ── Debug logging ───────────────────────────────────────────────
@@ -148,7 +194,10 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionJustReleased("lean_right"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonUp, Name = "lean_right", Value = 0 });
 			if (Input.IsActionJustPressed("escape"))
+			{
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "esc", Value = 1 });
+				SetMouseCaptured(!_mouseCaptured);
+			}
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
 
