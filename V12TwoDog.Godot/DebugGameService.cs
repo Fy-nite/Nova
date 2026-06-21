@@ -4,6 +4,7 @@ using Godot;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Components;
+using V12.Basic.Components;
 
 namespace V12TwoDog
 {
@@ -23,22 +24,14 @@ namespace V12TwoDog
         public void Update(float deltaTime)
         {
             CheckWorldBinding();
-            if (_needsUpdate)
-            {
-                UpdateDebugNodes();
-                _needsUpdate = false;
-            }
+            UpdateDebugNodes();
         }
 
         public void Update(GameRoot gameRoot)
         {
             _gameRoot = gameRoot;
             CheckWorldBinding();
-            if (_needsUpdate)
-            {
-                UpdateDebugNodes();
-                _needsUpdate = false;
-            }
+            UpdateDebugNodes();
         }
 
         private void CheckWorldBinding()
@@ -114,6 +107,19 @@ namespace V12TwoDog
                     {
                         bool active = comp is ComponentBase cb ? cb.Active : true;
                         infoLines.Add($"{indent}  - Component: {comp.GetType().Name} (Name: {comp.Name}, Active: {active})");
+
+                        if (comp is TransformComponent tc)
+                        {
+                            infoLines.Add($"{indent}      Pos=({tc.X:F2},{tc.Y:F2},{tc.Z:F2}) RotX={tc.RotationX?.ToString("F2")??"null"} RotY={tc.RotationY?.ToString("F2")??"null"} RotZ={tc.RotationZ?.ToString("F2")??"null"} RY={tc.RY:F4}");
+                        }
+                        else if (comp is LocomotionComponent lc)
+                        {
+                            infoLines.Add($"{indent}      Vel=({lc.Velocity.X:F4},{lc.Velocity.Y:F4},{lc.Velocity.Z:F4}) Grounded={lc.IsGrounded} CanJump={lc.CanJump}");
+                        }
+                        else if (comp is PhysicsBodyComponent pbc)
+                        {
+                            infoLines.Add($"{indent}      BodyHandle={pbc.BodyHandle.Value} IsKinematic={pbc.IsKinematic}");
+                        }
                     }
 
                     if (element.Children != null)
@@ -139,6 +145,7 @@ namespace V12TwoDog
             var existingChildren = _debugSlot.GetChildren();
             for (int i = 0; i < existingChildren.Count; i++)
             {
+                _debugSlot.RemoveChild(existingChildren[i]);
                 existingChildren[i].QueueFree();
             }
 

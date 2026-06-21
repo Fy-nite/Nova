@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Godot;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
+using V12.Components;
 
 namespace V12TwoDog
 {
@@ -40,10 +41,20 @@ namespace V12TwoDog
 		
 		public int GetScreenHeight() => (int)DisplayServer.WindowGetSize().Y;
 
-		private Dictionary<IRenderable, Node3D> _renderableNodes = new Dictionary<IRenderable, Node3D>(); // generalise this for the rest of time.
+		private Dictionary<IRenderable, Node3D> _renderableNodes = new Dictionary<IRenderable, Node3D>();
 
 		public void step()
 		{
+			// Build element -> node mapping for parent lookups
+			var elementNodeMap = new Dictionary<long, Node3D>();
+			foreach (var kvp in _renderableNodes)
+			{
+				if (kvp.Key is ComponentBase comp && comp.Owner != null)
+				{
+					elementNodeMap[comp.Owner.Id] = kvp.Value;
+				}
+			}
+
 			// Clean up nodes for renderables that are no longer queued
 			var toRemove = new List<IRenderable>();
 			foreach (var kvp in _renderableNodes)
@@ -119,12 +130,26 @@ namespace V12TwoDog
 					{
 						node = new Camera3D();
 					}
+					else if (renderable.RenderType == RenderType.RawElement)
+					{
+						node = new Node3D();
+						node.Name = renderable.Name;
+					}
 
 					if (node != null)
 					{
-						GD.Print($"[Renderer] Created node '{node.GetType().Name}' for renderable '{renderable.Name}' (ID: {renderable.Id}, Type: {renderable.GetType().Name})");
-						root.CurrentScene.AddChild(node);
+						// Parent under parent element's node if available
+						Node3D parentNode = null;
+						if (renderable is ComponentBase comp && comp.Owner?.Parent != null)
+						{
+							elementNodeMap.TryGetValue(comp.Owner.Parent.Id, out parentNode);
+						}
+						(parentNode ?? root.CurrentScene).AddChild(node);
 						_renderableNodes[renderable] = node;
+						if (renderable is ComponentBase rComp && rComp.Owner != null)
+							elementNodeMap[rComp.Owner.Id] = node;
+
+						GD.Print($"[Renderer] Created node '{node.GetType().Name}' for renderable '{renderable.Name}' (ID: {renderable.Id}, Type: {renderable.GetType().Name}) parented to {(parentNode?.Name ?? "root")}");
 					}
 				}
 

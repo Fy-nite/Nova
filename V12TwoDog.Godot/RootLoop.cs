@@ -2,6 +2,8 @@ using Godot;
 using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using V12.Components;
 using V12.Core;
 using V12.Core.Core.Interfaces;
@@ -20,9 +22,11 @@ public partial class RootLoop : Node3D
     IGameService Bootstrap;
     WorldXmlHotReloader xm;
     DebugGameService debug;
+    readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
     public override void _Ready()
 	{
 		V12.Core.Networking.BsonConfig.Initialize();
+		Console.SetOut(new GodotConsoleWriter());
 		root = new GameRoot();
 		renderer = new V12TwoDog.Renderer(GetTree());
         Bootstrap = new Bootstrap();
@@ -40,9 +44,9 @@ public partial class RootLoop : Node3D
         debug = new DebugGameService();
         debug.Initialize(root);
         root.Registry.Register("DebugGameService", debug );
+
+		root.CreateWorld("TestWorld");
 		root.Initialize();
-		//root.V12Loop();
-		root.CreateWorld("TestWorld","HotReload");
 
 
         /// Testing code
@@ -113,7 +117,7 @@ public partial class RootLoop : Node3D
 
 
             // ── Debug logging ───────────────────────────────────────────────
-            GD.Print($"Input: moveX={moveX:F2}, moveY={moveY:F2}, lookX={lookX:F2}, lookY={lookY:F2}");
+            //GD.Print($"Input: moveX={moveX:F2}, moveY={moveY:F2}, lookX={lookX:F2}, lookY={lookY:F2}");
 
             // ── Send axis events to V12 input system ──────────────────────────
             inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "move_right", Value = moveX > 0 ? moveX : 0f });
@@ -147,13 +151,52 @@ public partial class RootLoop : Node3D
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "esc", Value = 1 });
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
-				
+
+			// ── Fly mode events ────────────────────────────────────────────────
+			if (Input.IsActionJustPressed("fly_toggle"))
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "fly_toggle", Value = 1 });
+			if (Input.IsActionPressed("fly_up"))
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_up", Value = 1f });
+			if (Input.IsActionPressed("fly_down"))
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_down", Value = 1f });
+
+			// ── Controller button events ───────────────────────────────────────
+			var currentJoy = new Dictionary<JoyButton, bool>();
+			for (int i = 0; i < (int)JoyButton.Max; i++)
+			{
+				var btn = (JoyButton)i;
+				currentJoy[btn] = Input.IsJoyButtonPressed(0, btn);
+			}
+
+			void SendCtrlBtn(string name, JoyButton btn)
+			{
+				bool now = currentJoy.GetValueOrDefault(btn, false);
+				bool prev = _prevJoyButtons.GetValueOrDefault(btn, false);
+				if (now && !prev)
+					inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = name, Value = 1 });
+				if (!now && prev)
+					inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonUp, Name = name, Value = 0 });
+			}
+
+			SendCtrlBtn("jump", JoyButton.A);
+			SendCtrlBtn("crouch", JoyButton.B);
+			SendCtrlBtn("interact", JoyButton.X);
+			SendCtrlBtn("fly_toggle", JoyButton.Y);
+			SendCtrlBtn("lean_left", JoyButton.LeftShoulder);
+			SendCtrlBtn("lean_right", JoyButton.RightShoulder);
+			SendCtrlBtn("esc", JoyButton.Start);
+
+			float ltAxis = Input.GetJoyAxis(0, (JoyAxis)4); // LeftTrigger
+			if (ltAxis > 0.15f)
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "run", Value = ltAxis });
+
+			_prevJoyButtons.Clear();
+			foreach (var kv in currentJoy)
+				_prevJoyButtons[kv.Key] = kv.Value;
+
 		
 
 		root.Update((float)delta);
-
-		foreach (var service in root.Registry.GetAll<IGameService>())
-			service.Update((float)delta);
 
 		List<IRenderable> renderables = root.GetAllRenderables();
 		
@@ -165,5 +208,37 @@ public partial class RootLoop : Node3D
 		renderer.step();
         //xm.Update();
         debug.Update((float)delta);
+    }
+}
+
+public class GodotConsoleWriter : TextWriter
+{
+    private readonly StringBuilder _buffer = new StringBuilder();
+
+    public override Encoding Encoding => Encoding.UTF8;
+
+    public override void Write(string value)
+    {
+        _buffer.Append(value);
+    }
+
+    public override void WriteLine(string value)
+    {
+        _buffer.Append(value);
+        Flush();
+    }
+
+    public override void WriteLine()
+    {
+        Flush();
+    }
+
+    public override void Flush()
+    {
+        if (_buffer.Length > 0)
+        {
+            GD.Print(_buffer.ToString().TrimEnd('\r', '\n'));
+            _buffer.Clear();
+        }
     }
 }
