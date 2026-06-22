@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using V12.Basic.Components;
 using V12.Components;
 using V12.Core;
 using V12.Core.Core.Interfaces;
@@ -149,27 +150,15 @@ public partial class RootLoop : Node3D
 			float stickRX = Input.GetJoyAxis(0, JoyAxis.RightX);
 			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY);
 
-            // ── Mouse look ──
+            // ── Mouse look (sent as delta to worker thread via PlayerComponent) ──
             if (_mouseCaptured && _mouseLook != Vector2.Zero)
             {
-                float ms = 0.002f;
                 var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
                 if (player != null)
                 {
-                    var playerT = player.GetComponent<V12.Components.TransformComponent>();
-                    if (playerT != null)
-                        playerT.RY += -_mouseLook.X * ms;
-
-                    var cam = player.FindChildByName("PlayerCamera3D");
-                    if (cam != null)
-                    {
-                        var camT = cam.GetComponent<V12.Components.TransformComponent>();
-                        if (camT != null)
-                        {
-                            float newPitch = camT.RX + (-_mouseLook.Y) * ms;
-                            camT.RX = Math.Clamp(newPitch, -1.520f, 1.520f);
-                        }
-                    }
+                    var pc = player.GetComponent<PlayerComponent>();
+                    if (pc != null)
+                        pc.AddMouseDelta(_mouseLook.X, _mouseLook.Y);
                 }
                 _mouseLook = Vector2.Zero;
             }
@@ -233,6 +222,8 @@ public partial class RootLoop : Node3D
 			// ── Fly mode events ──
 			if (Input.IsActionJustPressed("fly_toggle"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "fly_toggle", Value = 1 });
+			if (Input.IsActionJustReleased("fly_toggle"))
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonUp, Name = "fly_toggle", Value = 0 });
 			if (Input.IsActionPressed("fly_up"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_up", Value = 1f });
 			if (Input.IsActionPressed("fly_down"))

@@ -51,9 +51,11 @@ namespace V12TwoDog
 				var rs = new RenderableSnapshot();
 				rs.ElementId = r.Id;
 				rs.Name = r.Name ?? "";
-				if (r is ComponentBase cb && cb.Owner?.Parent != null)
-					rs.ParentId = cb.Owner.Parent.Id;
-				rs.Transform = r is ITransformRenderable tr ? tr.Transform : r.WorldTransform;
+				rs.ParentId = 0;
+				if (r is ComponentBase cb && cb.Owner != null)
+					rs.Transform = cb.Owner.WorldTransform;
+				else
+					rs.Transform = r is ITransformRenderable tr ? tr.Transform : r.WorldTransform;
 				rs.IsWorldLocked = r is ITransformRenderable itr && itr.IsWorldLocked;
 
 				if (r is ILightRenderable light)
@@ -160,13 +162,13 @@ namespace V12TwoDog
 					node = CreateNode(rs);
 					if (node == null) continue;
 
-					// Parent under parent element's node
-					Node3D parentNode = null;
-					if (rs.ParentId != 0)
-						elementNodeMap.TryGetValue(rs.ParentId, out parentNode);
-					(parentNode ?? root.CurrentScene).AddChild(node);
+					root.CurrentScene.AddChild(node);
 					_nodesByElementId[rs.ElementId] = node;
 					elementNodeMap[rs.ElementId] = node;
+				}
+				else if (node.GetParent() != root.CurrentScene)
+				{
+					node.Reparent(root.CurrentScene);
 				}
 
 				// Update properties

@@ -22,12 +22,7 @@ namespace V12TwoDog
 
         public void Update(float deltaTime)
         {
-            if (_gameRoot?.SelectedWorld == null) return;
-
-            // Legacy path - snapshot the world state and apply
-            var snapshot = new FrameSnapshot();
-            CaptureAudioSnapshot(snapshot, _gameRoot.SelectedWorld);
-            ApplySnapshot(snapshot);
+            // Audio snapshot is applied from main thread's _Process via ApplySnapshot(_latestFrame)
         }
 
         private void CaptureAudioSnapshot(FrameSnapshot snapshot, World world)

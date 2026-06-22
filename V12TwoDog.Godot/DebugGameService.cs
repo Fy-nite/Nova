@@ -8,7 +8,7 @@ using V12.Basic.Components;
 
 namespace V12TwoDog
 {
-    public class DebugGameService : IGameService
+    public class DebugGameService
     {
         private GameRoot _gameRoot;
         private Node3D _debugSlot;
@@ -23,17 +23,6 @@ namespace V12TwoDog
 
         public void Update(float deltaTime)
         {
-            if (_needsUpdate)
-            {
-                CheckWorldBinding();
-                UpdateDebugNodes();
-                _needsUpdate = false;
-            }
-        }
-
-        public void Update(GameRoot gameRoot)
-        {
-            _gameRoot = gameRoot;
             if (_needsUpdate)
             {
                 CheckWorldBinding();
