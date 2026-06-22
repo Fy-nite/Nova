@@ -1,8 +1,5 @@
 [gd_scene format=3 uid="uid://c67xlhgmqbjit"]
 
-[ext_resource type="Script" uid="uid://c5rnbxf7cnm7o" path="res://FPS Controller/entities/interactable_test/interactable_test.gd" id="1_72rlg"]
-[ext_resource type="Script" uid="uid://qerehhswyhbs" path="res://addons/worldml_exporter/nodes/V12Svg.gd" id="1_bs5q2"]
-[ext_resource type="Material" uid="uid://b3cldrwcdhuty" path="res://FPS Controller/materials/orange_material.tres" id="2_l4x4o"]
 [ext_resource type="Material" uid="uid://by5encxbbc8ur" path="res://prototype_textures/materials/blue_material.tres" id="4_l4x4o"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_bxatn"]
@@ -30,43 +27,11 @@ adjustment_enabled = true
 adjustment_contrast = 1.05
 adjustment_saturation = 1.1
 
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_72rlg"]
-width = 628
-
-[sub_resource type="BoxMesh" id="BoxMesh_ac262"]
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_65t83"]
-
 [node name="Prototype" type="Node3D" unique_id=1831033359]
 metadata/_edit_group_ = true
-metadata/_edit_lock_ = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1748113669]
 environment = SubResource("Environment_ljefa")
-
-[node name="AreaLight3D" type="AreaLight3D" parent="WorldEnvironment" unique_id=814903386]
-transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 8.824444, -0.063111305)
-light_color = Color(1, 0, 1, 1)
-light_energy = 3.81
-light_indirect_energy = 3.105
-light_size = 0.515
-area_range = 391.759
-area_attenuation = -0.03
-area_size = Vector2(36.75, 31.918)
-area_texture = SubResource("NoiseTexture2D_72rlg")
-
-[node name="InteractableTest" type="Area3D" parent="." unique_id=673150180]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 2, 0)
-script = ExtResource("1_72rlg")
-interaction_text = "Interact (F)"
-metadata/_custom_type_script = "uid://gy6m101wg8y5"
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="InteractableTest" unique_id=1607432042]
-material_override = ExtResource("2_l4x4o")
-mesh = SubResource("BoxMesh_ac262")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="InteractableTest" unique_id=1808408522]
-shape = SubResource("BoxShape3D_65t83")
 
 [node name="CSGRoot" type="CSGCombiner3D" parent="." unique_id=503339379]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, -3.9999998)
@@ -106,17 +71,13 @@ size = Vector3(7.9, 2, 0.12646484)
 [node name="Node3D" type="Node3D" parent="." unique_id=1272538464]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.90000004, -1.6)
 
-[node name="V12Svg" type="Node" parent="Node3D" unique_id=702265836]
-script = ExtResource("1_bs5q2")
-svg_file = "uid://b7glk7lrjwkmp"
-
 [node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=903693513]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -4.05)
 size = Vector3(24, 0.5, 23.7)
 material = ExtResource("4_l4x4o")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1395289630]
-transform = Transform3D(0.70710665, 0.5000002, -0.5, 0, 0.70710665, 0.7071069, 0.7071069, -0.5, 0.4999998, 0, 0, 0)
+transform = Transform3D(0.70710665, 0.5000002, -0.5, 0, 0.70710665, 0.7071069, 0.7071069, -0.5, 0.4999998, -5.85, 8.27315, 5.8499975)
 light_energy = 0.5
 light_bake_mode = 1
 shadow_enabled = true

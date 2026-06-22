@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Godot;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
+using V12.Core.Rendering;
 using V12.Components;
 
 namespace V12TwoDog
@@ -11,13 +12,14 @@ namespace V12TwoDog
 	{
 		private readonly List<IRenderable> _renderables = new List<IRenderable>();
 		public SceneTree root;
+		private Dictionary<long, Node3D> _nodesByElementId = new();
 
 		public Renderer(SceneTree t)
 		{
 			root = t;
 		}
 
-		public int GetFPS() => 60; //TODO: replace soon with (int)V12TwoDog.Godot.Globals.GetFPS()
+		public int GetFPS() => 60;
 
 		public RendererInfo GetAllInfo()
 		{
@@ -27,9 +29,7 @@ namespace V12TwoDog
 		public void QueueItem(IRenderable item)
 		{
 			if (!_renderables.Contains(item))
-			{
 				_renderables.Add(item);
-			}
 		}
 
 		public void RemoveItem(IRenderable item)
@@ -38,239 +38,312 @@ namespace V12TwoDog
 		}
 
 		public int GetScreenWidth() => (int)DisplayServer.WindowGetSize().X;
-		
-		public int GetScreenHeight() => (int)DisplayServer.WindowGetSize().Y;
 
-		private Dictionary<IRenderable, Node3D> _renderableNodes = new Dictionary<IRenderable, Node3D>();
+		public int GetScreenHeight() => (int)DisplayServer.WindowGetSize().Y;
 
 		public void step()
 		{
-			// Build element -> node mapping for parent lookups
-			var elementNodeMap = new Dictionary<long, Node3D>();
-			foreach (var kvp in _renderableNodes)
+			// Legacy path - kept for backwards compat, delegates to ApplySnapshot
+			var snapshot = new FrameSnapshot();
+			snapshot.Renderables.Capacity = _renderables.Count;
+			foreach (var r in _renderables)
 			{
-				if (kvp.Key is ComponentBase comp && comp.Owner != null)
+				var rs = new RenderableSnapshot();
+				rs.ElementId = r.Id;
+				rs.Name = r.Name ?? "";
+				if (r is ComponentBase cb && cb.Owner?.Parent != null)
+					rs.ParentId = cb.Owner.Parent.Id;
+				rs.Transform = r is ITransformRenderable tr ? tr.Transform : r.WorldTransform;
+				rs.IsWorldLocked = r is ITransformRenderable itr && itr.IsWorldLocked;
+
+				if (r is ILightRenderable light)
 				{
-					elementNodeMap[comp.Owner.Id] = kvp.Value;
+					switch (light.Type)
+					{
+						case LightType.Directional: rs.NodeType = SnapshotNodeType.LightDirectional; break;
+						case LightType.Spot:        rs.NodeType = SnapshotNodeType.LightSpot; break;
+						default:                    rs.NodeType = SnapshotNodeType.LightPoint; break;
+					}
+					rs.LightColor = light.Color;
+					rs.LightIntensity = light.Intensity;
+					rs.LightRange = light.Range;
+					rs.LightAngle = light.Angle;
+					rs.LightSpotSoftness = light.SpotSoftness;
 				}
+				else if (r is IMeshRenderable mesh)
+				{
+					MeshComponent mc = null;
+					if (mesh is MeshComponent mcDirect)
+						mc = mcDirect;
+					else if (mesh is V12.Components.Renderables.MeshRenderer mr && mr.Mesh is MeshComponent mcWrap)
+						mc = mcWrap;
+					if (mc != null)
+					{
+						switch (mc.Shape)
+						{
+							case MeshShape.Box:    rs.NodeType = SnapshotNodeType.MeshBox; break;
+							case MeshShape.Sphere: rs.NodeType = SnapshotNodeType.MeshSphere; break;
+							case MeshShape.Custom: rs.NodeType = SnapshotNodeType.MeshCustom; break;
+							default:               rs.NodeType = SnapshotNodeType.MeshBox; break;
+						}
+						rs.MeshWidth = mc.Width;
+						rs.MeshHeight = mc.Height;
+						rs.MeshDepth = mc.Depth;
+						rs.MeshPoints = mc.MeshPoints;
+						rs.MeshIndices = mc.Indices;
+					}
+					else
+					{
+						rs.NodeType = SnapshotNodeType.RawElement;
+					}
+				}
+				else if (r is ICameraRenderable cam)
+				{
+					rs.NodeType = SnapshotNodeType.Camera;
+					rs.Fov = cam.FieldOfView;
+					rs.NearClip = cam.NearClip;
+					rs.FarClip = cam.FarClip;
+					rs.IsCurrentCamera = cam.IsCurrent;
+				}
+				else if (r is ISpriteRenderable sprite)
+				{
+					rs.NodeType = SnapshotNodeType.Sprite;
+					rs.TextureSource = sprite.Texture?.Source ?? "";
+					rs.SizeX = sprite.Size.X;
+					rs.SizeY = sprite.Size.Y;
+					rs.Tint = sprite.Tint;
+				}
+				else if (r is ISvgRenderable svg)
+				{
+					rs.NodeType = SnapshotNodeType.Svg;
+					rs.SvgContent = svg.SvgContent ?? "";
+					rs.SizeX = svg.Size.X;
+					rs.SizeY = svg.Size.Y;
+					rs.Tint = svg.Tint;
+				}
+				else if (r is ITextRenderable text)
+				{
+					rs.NodeType = SnapshotNodeType.Text;
+					rs.TextContent = text.Text ?? "";
+					rs.TextColor = text.Color;
+					rs.FontSize = text.FontSize;
+				}
+				else
+				{
+					rs.NodeType = SnapshotNodeType.RawElement;
+				}
+				snapshot.Renderables.Add(rs);
+			}
+			ApplySnapshot(snapshot);
+		}
+
+		public void ApplySnapshot(FrameSnapshot snapshot)
+		{
+			if (snapshot == null) return;
+
+			var currentIds = new HashSet<long>();
+			var elementNodeMap = new Dictionary<long, Node3D>();
+
+			// Build parent map from existing nodes
+			foreach (var kvp in _nodesByElementId)
+			{
+				elementNodeMap[kvp.Key] = kvp.Value;
 			}
 
-			// Clean up nodes for renderables that are no longer queued
-			var toRemove = new List<IRenderable>();
-			foreach (var kvp in _renderableNodes)
+			// Process every renderable in the snapshot
+			foreach (var rs in snapshot.Renderables)
 			{
-				if (!_renderables.Contains(kvp.Key))
+				currentIds.Add(rs.ElementId);
+
+				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node) || !GodotObject.IsInstanceValid(node))
+				{
+					node = CreateNode(rs);
+					if (node == null) continue;
+
+					// Parent under parent element's node
+					Node3D parentNode = null;
+					if (rs.ParentId != 0)
+						elementNodeMap.TryGetValue(rs.ParentId, out parentNode);
+					(parentNode ?? root.CurrentScene).AddChild(node);
+					_nodesByElementId[rs.ElementId] = node;
+					elementNodeMap[rs.ElementId] = node;
+				}
+
+				// Update properties
+				UpdateNodeProperties(node, rs);
+
+				// Update transform
+				var basis = new Basis(
+					new Vector3(rs.Transform.M11, rs.Transform.M12, rs.Transform.M13),
+					new Vector3(rs.Transform.M21, rs.Transform.M22, rs.Transform.M23),
+					new Vector3(rs.Transform.M31, rs.Transform.M32, rs.Transform.M33)
+				);
+				var origin = new Vector3(rs.Transform.M41, rs.Transform.M42, rs.Transform.M43);
+				node.Transform = new Transform3D(basis, origin);
+			}
+
+			// Remove stale nodes
+			var toRemove = new List<long>();
+			foreach (var kvp in _nodesByElementId)
+			{
+				if (!currentIds.Contains(kvp.Key))
 				{
 					if (GodotObject.IsInstanceValid(kvp.Value))
-					{
-						GD.Print($"[Renderer] QueueFree node '{kvp.Value.GetType().Name}' for renderable '{kvp.Key.Name}' (ID: {kvp.Key.Id})");
 						kvp.Value.QueueFree();
-					}
 					toRemove.Add(kvp.Key);
 				}
 			}
-			foreach (var r in toRemove)
-			{
-				_renderableNodes.Remove(r);
-			}
+			foreach (var id in toRemove)
+				_nodesByElementId.Remove(id);
+		}
 
-			// Rendering logic using Godot
-			foreach (var renderable in _renderables)
+		private Node3D CreateNode(RenderableSnapshot rs)
+		{
+			switch (rs.NodeType)
 			{
-				if (!_renderableNodes.TryGetValue(renderable, out var node) || !GodotObject.IsInstanceValid(node))
+				case SnapshotNodeType.LightPoint:
+					return new OmniLight3D();
+				case SnapshotNodeType.LightDirectional:
+					return new DirectionalLight3D();
+				case SnapshotNodeType.LightSpot:
+					return new SpotLight3D();
+				case SnapshotNodeType.MeshBox:
+				case SnapshotNodeType.MeshSphere:
+				case SnapshotNodeType.MeshCustom:
 				{
-					GD.Print($"[Renderer] No valid node found for renderable '{renderable.Name}' (ID: {renderable.Id}, Type: {renderable.GetType().Name}). Creating new node.");
-					// Create new Godot node based on renderable type
-					if (renderable is ILightRenderable light)
+					var item = new MeshInstance3D();
+					switch (rs.NodeType)
 					{
-						switch (light.Type)
+						case SnapshotNodeType.MeshBox:
+							item.Mesh = new BoxMesh();
+							((BoxMesh)item.Mesh).Size = new Vector3(rs.MeshWidth, rs.MeshHeight, rs.MeshDepth);
+							break;
+						case SnapshotNodeType.MeshSphere:
+							item.Mesh = new SphereMesh();
+							((SphereMesh)item.Mesh).Radius = rs.MeshWidth;
+							break;
+						case SnapshotNodeType.MeshCustom:
 						{
-							case LightType.Point:
-								node = new OmniLight3D();
-								break;
-							case LightType.Directional:
-								node = new DirectionalLight3D();
-								break;
-							case LightType.Spot:
-								node = new SpotLight3D();
-								break;
-							default:
-								node = new OmniLight3D();
-								break;
-						}
-					}
-					else if (renderable is IMeshRenderable meshRenderable)
-					{
-						var item = new MeshInstance3D();
-
-						// Extract shape data — MeshComponent directly, or through MeshRenderer wrapper
-						MeshComponent meshComp = null;
-						if (meshRenderable is MeshComponent mc)
-							meshComp = mc;
-						else if (meshRenderable is V12.Components.Renderables.MeshRenderer mr && mr.Mesh is MeshComponent mc2)
-							meshComp = mc2;
-
-						if (meshComp != null)
-						{
-							switch (meshComp.Shape)
+							if (rs.MeshPoints != null && rs.MeshPoints.Length >= 3)
 							{
-								case MeshShape.Box:
-									item.Mesh = new BoxMesh();
-									((BoxMesh)item.Mesh).Size = new Vector3(meshComp.Width, meshComp.Height, meshComp.Depth);
-									break;
-								case MeshShape.Sphere:
-									item.Mesh = new SphereMesh();
-									((SphereMesh)item.Mesh).Radius = meshComp.Width;
-									break;
-								case MeshShape.Custom:
+								var verts = new Vector3[rs.MeshPoints.Length / 3];
+								for (int i = 0; i < verts.Length; i++)
 								{
-									var meshPoints = meshComp.MeshPoints;
-									if (meshPoints != null && meshPoints.Length >= 3)
-									{
-										var verts = new Vector3[meshPoints.Length / 3];
-										for (int i = 0; i < verts.Length; i++)
-										{
-											verts[i] = new Vector3(
-												(float)meshPoints[i * 3],
-												(float)meshPoints[i * 3 + 1],
-												(float)meshPoints[i * 3 + 2]
-											);
-										}
-
-										var arrays = new Variant[13];
-										arrays[0] = verts;
-
-										var indices = meshComp.Indices;
-										if (indices != null && indices.Length > 0)
-										{
-											var idx = new int[indices.Length];
-											for (int i = 0; i < idx.Length; i++)
-												idx[i] = (int)indices[i];
-											arrays[12] = idx;
-										}
-
-										item.Mesh = new ArrayMesh();
-										((ArrayMesh)item.Mesh).AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, new global::Godot.Collections.Array(arrays));
-									}
-									break;
+									verts[i] = new Vector3(
+										(float)rs.MeshPoints[i * 3],
+										(float)rs.MeshPoints[i * 3 + 1],
+										(float)rs.MeshPoints[i * 3 + 2]
+									);
 								}
+								var arrays = new Variant[13];
+								arrays[0] = verts;
+								if (rs.MeshIndices != null && rs.MeshIndices.Length > 0)
+								{
+									var idx = new int[rs.MeshIndices.Length];
+									for (int i = 0; i < idx.Length; i++)
+										idx[i] = (int)rs.MeshIndices[i];
+									arrays[12] = idx;
+								}
+								item.Mesh = new ArrayMesh();
+								((ArrayMesh)item.Mesh).AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, new global::Godot.Collections.Array(arrays));
 							}
+							break;
 						}
-						node = item;
 					}
-					else if (renderable is ISpriteRenderable)
-					{
-						node = new Sprite3D();
-					}
-					else if (renderable is ISvgRenderable)
-					{
-						node = new Sprite3D();
-					}
-					else if (renderable is ITextRenderable)
-					{
-						node = new Label3D();
-					}
-					else if (renderable is ICameraRenderable)
-					{
-						node = new Camera3D();
-					}
-					else if (renderable.RenderType == RenderType.RawElement)
-					{
-						node = new Node3D();
-						node.Name = renderable.Name;
-					}
-
-					if (node != null)
-					{
-						// Parent under parent element's node if available
-						Node3D parentNode = null;
-						if (renderable is ComponentBase comp && comp.Owner?.Parent != null)
-						{
-							elementNodeMap.TryGetValue(comp.Owner.Parent.Id, out parentNode);
-						}
-						(parentNode ?? root.CurrentScene).AddChild(node);
-						_renderableNodes[renderable] = node;
-						if (renderable is ComponentBase rComp && rComp.Owner != null)
-							elementNodeMap[rComp.Owner.Id] = node;
-
-						GD.Print($"[Renderer] Created node '{node.GetType().Name}' for renderable '{renderable.Name}' (ID: {renderable.Id}, Type: {renderable.GetType().Name}) parented to {(parentNode?.Name ?? "root")}");
-					}
+					return item;
 				}
-
-				// Update properties and transform if node exists
-				if (node != null)
+				case SnapshotNodeType.Sprite:
+				case SnapshotNodeType.Svg:
+					return new Sprite3D();
+				case SnapshotNodeType.Text:
+					return new Label3D();
+				case SnapshotNodeType.Camera:
+					return new Camera3D();
+				default:
 				{
-					if (renderable is ILightRenderable light && node is Light3D light3D)
-					{
-						var col = light.Color;
-						light3D.LightColor = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
-						light3D.LightEnergy = light.Intensity;
+					var n = new Node3D();
+					n.Name = rs.Name;
+					return n;
+				}
+			}
+		}
 
+		private void UpdateNodeProperties(Node3D node, RenderableSnapshot rs)
+		{
+			switch (rs.NodeType)
+			{
+				case SnapshotNodeType.LightPoint:
+				case SnapshotNodeType.LightDirectional:
+				case SnapshotNodeType.LightSpot:
+				{
+					if (node is Light3D light3D)
+					{
+						var col = rs.LightColor;
+						light3D.LightColor = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
+						light3D.LightEnergy = rs.LightIntensity;
 						if (light3D is OmniLight3D omni)
-						{
-							omni.OmniRange = light.Range;
-						}
+							omni.OmniRange = rs.LightRange;
 						else if (light3D is SpotLight3D spot)
 						{
-							spot.SpotRange = light.Range;
-							spot.SpotAngle = light.Angle;
-							spot.SpotAngleAttenuation = light.SpotSoftness;
+							spot.SpotRange = rs.LightRange;
+							spot.SpotAngle = rs.LightAngle;
+							spot.SpotAngleAttenuation = rs.LightSpotSoftness;
 						}
 					}
-					else if (renderable is ISpriteRenderable spriteRenderable && node is Sprite3D sprite3D)
+					break;
+				}
+				case SnapshotNodeType.Sprite:
+				{
+					if (node is Sprite3D sprite3D)
 					{
-						if (spriteRenderable.Texture != null && !string.IsNullOrEmpty(spriteRenderable.Texture.Source))
-						{
-							sprite3D.Texture = GD.Load<Texture2D>(spriteRenderable.Texture.Source);
-						}
-						sprite3D.Scale = new Vector3(spriteRenderable.Size.X, spriteRenderable.Size.Y, 1.0f);
-						var col = spriteRenderable.Tint;
+						if (!string.IsNullOrEmpty(rs.TextureSource))
+							sprite3D.Texture = GD.Load<Texture2D>(ResolveAssetPath(rs.TextureSource));
+						sprite3D.Scale = new Vector3(rs.SizeX, rs.SizeY, 1.0f);
+						var col = rs.Tint;
 						sprite3D.Modulate = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
 					}
-					else if (renderable is ISvgRenderable svgRenderable && node is Sprite3D svgSprite)
+					break;
+				}
+				case SnapshotNodeType.Svg:
+				{
+					if (node is Sprite3D svgSprite)
 					{
-						if (!string.IsNullOrEmpty(svgRenderable.SvgContent))
+						if (!string.IsNullOrEmpty(rs.SvgContent))
 						{
-							var svgBytes = System.Text.Encoding.UTF8.GetBytes(svgRenderable.SvgContent);
+							var svgBytes = System.Text.Encoding.UTF8.GetBytes(rs.SvgContent);
 							var img = new Image();
 							img.LoadSvgFromBuffer(svgBytes, 1.0f);
 							svgSprite.Texture = ImageTexture.CreateFromImage(img);
 						}
-						svgSprite.Scale = new Vector3(svgRenderable.Size.X, svgRenderable.Size.Y, 1.0f);
-						var tint = svgRenderable.Tint;
+						svgSprite.Scale = new Vector3(rs.SizeX, rs.SizeY, 1.0f);
+						var tint = rs.Tint;
 						svgSprite.Modulate = new Color(tint.R / 255f, tint.G / 255f, tint.B / 255f);
 					}
-					else if (renderable is ITextRenderable textRenderable && node is Label3D label3D)
+					break;
+				}
+				case SnapshotNodeType.Text:
+				{
+					if (node is Label3D label3D)
 					{
-						label3D.Text = textRenderable.Text;
-						var col = textRenderable.Color;
+						label3D.Text = rs.TextContent;
+						var col = rs.TextColor;
 						label3D.Modulate = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
-						label3D.FontSize = (int)textRenderable.FontSize;
+						label3D.FontSize = (int)rs.FontSize;
 					}
-					else if (renderable is ICameraRenderable cameraRenderable && node is Camera3D camera3D)
+					break;
+				}
+				case SnapshotNodeType.Camera:
+				{
+					if (node is Camera3D camera3D)
 					{
-						camera3D.Fov = cameraRenderable.FieldOfView;
-						camera3D.Near = cameraRenderable.NearClip;
-						camera3D.Far = cameraRenderable.FarClip;
-						camera3D.Current = cameraRenderable.IsCurrent;
-						//camera3D.KeepAspect = Camera3D.KeepAspectEnum.KeepHeight;
+						camera3D.Fov = rs.Fov;
+						camera3D.Near = rs.NearClip;
+						camera3D.Far = rs.FarClip;
+						camera3D.Current = rs.IsCurrentCamera;
 					}
-
-					// Update Transform (use Transform for ITransformRenderable, WorldTransform for others)
-					System.Numerics.Matrix4x4 mat = renderable is ITransformRenderable tr
-						? tr.Transform
-						: renderable.WorldTransform;
-
-					var basis = new Basis(
-						new Vector3(mat.M11, mat.M12, mat.M13),
-						new Vector3(mat.M21, mat.M22, mat.M23),
-						new Vector3(mat.M31, mat.M32, mat.M33)
-					);
-					var origin = new Vector3(mat.M41, mat.M42, mat.M43);
-					node.Transform = new Transform3D(basis, origin);
+					break;
 				}
 			}
-
 		}
 
 		public void QueueItems(RenderPacket packet)
@@ -282,5 +355,10 @@ namespace V12TwoDog
 		{
 			throw new NotImplementedException();
 		}
+
+        private static string ResolveAssetPath(string path)
+        {
+            return V12.Core.V12AssetResolver.ResolveGlobal(path);
+        }
 	}
 }

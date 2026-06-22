@@ -1,16 +1,15 @@
 using Godot;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using V12.Core;
 using V12.Core.Core.Interfaces;
-using V12.Components;
+using V12.Core.Rendering;
 
 namespace V12TwoDog
 {
     public partial class GodotAudioPlayer : Node3D, IAudioPlayer
     {
-        private readonly Dictionary<IAudioSource, AudioStreamPlayer3D> _players = new();
+        private readonly Dictionary<long, AudioStreamPlayer3D> _players = new();
         private AudioListener3D _listener;
         private GameRoot _gameRoot;
 
@@ -25,82 +24,140 @@ namespace V12TwoDog
         {
             if (_gameRoot?.SelectedWorld == null) return;
 
-            var steamAudio = _gameRoot.Registry.Get<V12.Core.Audio.SteamAudioService>();
+            // Legacy path - snapshot the world state and apply
+            var snapshot = new FrameSnapshot();
+            CaptureAudioSnapshot(snapshot, _gameRoot.SelectedWorld);
+            ApplySnapshot(snapshot);
+        }
 
-            var v12Listener = _gameRoot.SelectedWorld.FindElementWithComponentRecursive<V12.Core.Core.Interfaces.IAudioListener>();
-            if (v12Listener != null)
-            {
-                var listenerComp = v12Listener.GetComponent<V12.Core.Core.Interfaces.IAudioListener>();
-                if (listenerComp != null)
-                    _listener.GlobalPosition = new Vector3(
-                        listenerComp.Position.X,
-                        listenerComp.Position.Y,
-                        listenerComp.Position.Z);
-            }
-
-            var worldSources = new HashSet<IAudioSource>();
+        private void CaptureAudioSnapshot(FrameSnapshot snapshot, World world)
+        {
             void Collect(IWorldElement element)
             {
                 if (element?.Components == null) return;
                 foreach (var c in element.Components.ToArray())
+                {
                     if (c is IAudioSource src)
                     {
-                        worldSources.Add(src);
-                        GD.Print($"[GodotAudioPlayer] Found source on element '{element.Name}': {src.AudioClipPath}");
+                        var a = new AudioSourceSnapshot
+                        {
+                            OwnerElementId = src.Id,
+                            Position = src.Position,
+                            Volume = src.Volume,
+                            Pitch = src.Pitch,
+                            MaxDistance = src.MaxDistance,
+                            IsPlaying = src.IsPlaying,
+                            ClipPath = src.AudioClipPath ?? ""
+                        };
+                        snapshot.AudioSources.Add(a);
                     }
+                }
                 if (element.Children != null)
-                    foreach (var child in element.Children.ToArray())
+                    foreach (var child in element.Children)
                         Collect(child);
             }
-            foreach (var root in _gameRoot.SelectedWorld.Root.ToArray())
-                Collect(root);
-            GD.Print($"[GodotAudioPlayer] Found {worldSources.Count} sources in world");
 
-            var toRemove = new List<IAudioSource>();
+            foreach (var root in world.Root.ToArray())
+                Collect(root);
+
+            var listenerElement = world.FindElementWithComponentRecursive<IAudioListener>();
+            if (listenerElement != null)
+            {
+                var listenerComp = listenerElement.GetComponent<IAudioListener>();
+                if (listenerComp != null)
+                {
+                    snapshot.Listener = new AudioListenerSnapshot
+                    {
+                        Position = listenerComp.Position,
+                        Forward = listenerComp.Forward,
+                        Up = listenerComp.Up,
+                        HasValue = true
+                    };
+                }
+            }
+        }
+
+        public void ApplySnapshot(FrameSnapshot snapshot)
+        {
+            if (snapshot == null) return;
+
+            // ── Update listener ──
+            if (snapshot.Listener.HasValue)
+            {
+                var pos = new Vector3(
+                    snapshot.Listener.Position.X,
+                    snapshot.Listener.Position.Y,
+                    snapshot.Listener.Position.Z);
+                var fwd = new Vector3(
+                    snapshot.Listener.Forward.X,
+                    snapshot.Listener.Forward.Y,
+                    snapshot.Listener.Forward.Z);
+                var up = new Vector3(
+                    snapshot.Listener.Up.X,
+                    snapshot.Listener.Up.Y,
+                    snapshot.Listener.Up.Z);
+
+                if (fwd != Vector3.Zero && up != Vector3.Zero)
+                {
+                    var right = fwd.Cross(up).Normalized();
+                    var orthoUp = right.Cross(fwd).Normalized();
+                    _listener.GlobalTransform = new Transform3D(
+                        new Basis(right, orthoUp, -fwd), pos);
+                }
+                else
+                {
+                    _listener.GlobalPosition = pos;
+                }
+            }
+
+            // ── Build set of current audio source IDs ──
+            var currentIds = new HashSet<long>();
+            foreach (var a in snapshot.AudioSources)
+                currentIds.Add(a.OwnerElementId);
+
+            // ── Remove stale sources ──
+            var toRemove = new List<long>();
             foreach (var kvp in _players)
             {
-                if (!worldSources.Contains(kvp.Key))
+                if (!currentIds.Contains(kvp.Key))
                 {
                     if (GodotObject.IsInstanceValid(kvp.Value))
                         kvp.Value.QueueFree();
                     toRemove.Add(kvp.Key);
                 }
             }
-            foreach (var src in toRemove)
-                _players.Remove(src);
+            foreach (var id in toRemove)
+                _players.Remove(id);
 
-            foreach (var source in worldSources)
+            // ── Create / update sources ──
+            foreach (var a in snapshot.AudioSources)
             {
-                if (!_players.TryGetValue(source, out var player) || !GodotObject.IsInstanceValid(player))
+                if (!_players.TryGetValue(a.OwnerElementId, out var player) || !GodotObject.IsInstanceValid(player))
                 {
                     player = new AudioStreamPlayer3D();
                     AddChild(player);
-                    _players[source] = player;
-                    GD.Print($"[GodotAudioPlayer] Created player for {source.AudioClipPath} playing={source.IsPlaying}");
+                    _players[a.OwnerElementId] = player;
                 }
 
-                if (!string.IsNullOrEmpty(source.AudioClipPath))
+                if (!string.IsNullOrEmpty(a.ClipPath))
                 {
                     var existingPath = player.Stream?.ResourcePath ?? "";
-                    if (existingPath != source.AudioClipPath)
-                        player.Stream = GD.Load<AudioStream>(source.AudioClipPath);
+                    if (existingPath != a.ClipPath)
+                        player.Stream = GD.Load<AudioStream>(V12.Core.V12AssetResolver.ResolveGlobal(a.ClipPath));
                 }
 
-                player.AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.Disabled;
-                player.MaxDistance = float.MaxValue;
-                player.PitchScale = source.Pitch;
+                player.AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseDistance;
+                player.MaxDistance = a.MaxDistance;
+                player.PitchScale = a.Pitch;
 
-                float gain = 1f;
-                if (steamAudio != null && steamAudio.IsInitialized)
-                    steamAudio.TryGetSourceGain(source, out gain);
-                SetGain(source, gain);
+                float finalVolume = Math.Clamp(1f * a.Volume, 0.0001f, 1f);
+                player.VolumeDb = Mathf.LinearToDb(finalVolume);
 
-                var pos = source.Position;
-                player.GlobalPosition = new Vector3(pos.X, pos.Y, pos.Z);
+                player.GlobalPosition = new Vector3(a.Position.X, a.Position.Y, a.Position.Z);
 
-                if (source.IsPlaying && !player.Playing)
+                if (a.IsPlaying && !player.Playing)
                     player.Play();
-                else if (!source.IsPlaying && player.Playing)
+                else if (!a.IsPlaying && player.Playing)
                     player.Stop();
             }
         }
@@ -109,32 +166,46 @@ namespace V12TwoDog
 
         public void Play(IAudioSource source)
         {
-            if (_players.TryGetValue(source, out var player) && GodotObject.IsInstanceValid(player))
-                player.Play();
+            foreach (var kvp in _players)
+            {
+                if (kvp.Value.Playing == false)
+                {
+                    kvp.Value.Play();
+                    break;
+                }
+            }
         }
 
         public void Stop(IAudioSource source)
         {
-            if (_players.TryGetValue(source, out var player) && GodotObject.IsInstanceValid(player))
-                player.Stop();
+            foreach (var kvp in _players)
+            {
+                if (kvp.Value.Playing)
+                {
+                    kvp.Value.Stop();
+                    break;
+                }
+            }
         }
 
         public void SetGain(IAudioSource source, float gain)
         {
-            if (_players.TryGetValue(source, out var player) && GodotObject.IsInstanceValid(player))
+            foreach (var kvp in _players)
             {
                 float finalVolume = Math.Clamp(gain * source.Volume, 0.0001f, 1f);
-                player.VolumeDb = Mathf.LinearToDb(finalVolume);
+                kvp.Value.VolumeDb = Mathf.LinearToDb(finalVolume);
+                break;
             }
         }
 
         public void RemoveSource(IAudioSource source)
         {
-            if (_players.TryGetValue(source, out var player))
+            long id = source.Id;
+            if (_players.TryGetValue(id, out var player))
             {
                 if (GodotObject.IsInstanceValid(player))
                     player.QueueFree();
-                _players.Remove(source);
+                _players.Remove(id);
             }
         }
     }

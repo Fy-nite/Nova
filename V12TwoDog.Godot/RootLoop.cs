@@ -1,34 +1,40 @@
 using Godot;
 using Microsoft.Win32;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using V12.Components;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Input;
-using V12.Core.Audio;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.Core.Networking;
+using V12.Core.Rendering;
 using V12.SampleGame;
 using V12TwoDog;
 
 public partial class RootLoop : Node3D
 {
-	// Called when the node enters the scene tree for the first time.
 	GameRoot root;
     IRenderer renderer;
     IGameService Bootstrap;
-    WorldXmlHotReloader xm;
     GodotAudioPlayer audioPlayer;
     DebugGameService debug;
 	readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
 	Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
 	bool _mouseCaptured;
+
+    // ── Threading ──
+    private Thread _v12Thread;
+    private CancellationTokenSource _cts;
+    private ConcurrentQueue<FrameSnapshot> _frameQueue = new();
+    private FrameSnapshot _latestFrame;
 
     public override void _Input(Godot.InputEvent @event)
     {
@@ -44,9 +50,9 @@ public partial class RootLoop : Node3D
         Input.MouseMode = captured ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
         _mouseCaptured = captured;
     }
-    SteamAudioService s = new SteamAudioService();
+
     public override void _Ready()
-	{
+    {
 		V12.Core.Networking.BsonConfig.Initialize();
 		Console.SetOut(new GodotConsoleWriter());
 		root = new GameRoot();
@@ -54,9 +60,6 @@ public partial class RootLoop : Node3D
         Bootstrap = new Bootstrap();
 
         root.Registry.Register("Bootstrap", Bootstrap);
-
-        root.Registry.Register("SteamAudioService", s);
-        s.Initialize(root);
         audioPlayer = new GodotAudioPlayer();
         audioPlayer.Initialize(root);
         root.Registry.Register("IAudioPlayer", audioPlayer);
@@ -66,7 +69,6 @@ public partial class RootLoop : Node3D
         if (_input == null )
         {
             _input = new InputService();
-
             root.Registry.Register("InputService", _input);
         }
         debug = new DebugGameService();
@@ -76,26 +78,50 @@ public partial class RootLoop : Node3D
 		root.CreateWorld("TestWorld");
 		root.Initialize();
 
-        // Initialize physics services (registered during Bootstrap but missed by GameRoot.Initialize's foreach)
+        // Initialize physics services
         root.Registry.Get<V12.Core.Systems.PhysicsService>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
+        root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
 
-        // Capture mouse for look control (deferred so the scene is ready)
         CallDeferred(nameof(SetMouseCaptured), true);
 
-
-        /// Testing code
-        //var hotreloader = new worldxmlsourcecomponent("hotreload.xml", true);
-        //var elem = new element { components = { hotreloader }, name = "hotreloadelement" };
-        //root.selectedworld.addelement(elem);
-        //xm = (worldxmlhotreloader)root.registry.get("hotreloader_testworld").serviceinstance;
-        //xm.initialize();
-        //xm._watchers["d:\\git\\v12\\v12twodog\\v12twodog.godot\\.godot\\mono\\temp\\bin\\debug\\hotreload.xml"].changed += (s, e) => debug._needsUpdate = true;
-
+        // ── Start V12 worker thread ──
+        _cts = new CancellationTokenSource();
+        _v12Thread = new Thread(() => V12WorkerLoop(_cts.Token))
+        {
+            Name = "V12Worker",
+            IsBackground = true
+        };
+        _v12Thread.Start();
     }
 
-	// Called every frame. 'delta' is the elapsed time since the previous frame.
+    private void V12WorkerLoop(CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!ct.IsCancellationRequested)
+        {
+            float dt = (float)sw.Elapsed.TotalSeconds;
+            sw.Restart();
+            dt = Math.Clamp(dt, 0.001f, 0.05f);
+
+            try
+            {
+                root.Update(dt);
+
+                var frame = root.CaptureFrame();
+                _frameQueue.Enqueue(frame);
+            }
+            catch (Exception ex)
+            {
+                GD.Print($"[V12Worker] {ex.GetType().Name}: {ex.Message}");
+            }
+
+            int sleepMs = Math.Max(1, (int)((1f / 60f - dt) * 1000));
+            Thread.Sleep(sleepMs);
+        }
+    }
+
 	public override void _Process(double delta)
 	{
         var inputService = root.Registry.Get<V12.Core.Input.InputService>();
@@ -106,7 +132,7 @@ public partial class RootLoop : Node3D
 			float lookX = 0f;
 			float lookY = 0f;
 
-			// ── Digital input (keyboard) ──────────────────────────────────────
+			// ── Digital input (keyboard) ──
 			if (Input.IsActionPressed("strafe_right")) moveX += 1f;
 			if (Input.IsActionPressed("strafe_left")) moveX -= 1f;
 			if (Input.IsActionPressed("move_forwards")) moveY += 1f;
@@ -117,19 +143,16 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionPressed("look_up")) lookY += 1f;
 			if (Input.IsActionPressed("look_down")) lookY -= 1f;
 
-            // ── Analog stick input (gamepad) ──────────────────────────────────
-			// Left stick: movement
-			float stickLX = Input.GetJoyAxis(0, JoyAxis.LeftX);  // -1 left, +1 right
-			float stickLY = Input.GetJoyAxis(0, JoyAxis.LeftY);  // -1 up,   +1 down
+            // ── Analog stick input (gamepad) ──
+			float stickLX = Input.GetJoyAxis(0, JoyAxis.LeftX);
+			float stickLY = Input.GetJoyAxis(0, JoyAxis.LeftY);
+			float stickRX = Input.GetJoyAxis(0, JoyAxis.RightX);
+			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY);
 
-			// Right stick: camera look
-			float stickRX = Input.GetJoyAxis(0, JoyAxis.RightX); // -1 left, +1 right
-			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY); // -1 up,   +1 down
-
-            // ── Mouse look (Y inverted, applied directly bypassing ActionMap clamp) ──
+            // ── Mouse look ──
             if (_mouseCaptured && _mouseLook != Vector2.Zero)
             {
-                float ms = 0.002f; // rad/pixel
+                float ms = 0.002f;
                 var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
                 if (player != null)
                 {
@@ -144,41 +167,34 @@ public partial class RootLoop : Node3D
                         if (camT != null)
                         {
                             float newPitch = camT.RX + (-_mouseLook.Y) * ms;
-                            camT.RX = Math.Clamp(newPitch, -1.520f, 1.520f); // ~±87°
+                            camT.RX = Math.Clamp(newPitch, -1.520f, 1.520f);
                         }
                     }
                 }
                 _mouseLook = Vector2.Zero;
             }
-            //Console.WriteLine($"Raw stick input: LX={stickLX:F2}, LY={stickLY:F2}, RX={stickRX:F2}, RY={stickRY:F2}");
-            // Apply deadzone (Godot may already apply one, but this is safety)
+
             const float deadzone = 0.15f;
 			if (Mathf.Abs(stickLX) < deadzone) stickLX = 0f;
 			if (Mathf.Abs(stickLY) < deadzone) stickLY = 0f;
 			if (Mathf.Abs(stickRX) < deadzone) stickRX = 0f;
 			if (Mathf.Abs(stickRY) < deadzone) stickRY = 0f;
 
-			// Blend: analog overrides digital when the stick is active
 			if (Mathf.Abs(stickLX) > 0f || Mathf.Abs(stickLY) > 0f)
 			{
 				moveX = stickLX;
-				moveY = -stickLY; // invert: stick down is +Y, but forward should be positive
+				moveY = -stickLY;
 			}
 			if (Mathf.Abs(stickRX) > 0f || Mathf.Abs(stickRY) > 0f)
 			{
 				lookX = stickRX;
-				lookY = -stickRY; // invert: stick down is +Y, but look-up should be positive
+				lookY = -stickRY;
 			}
 
-			// Clamp move to [-1, 1]; look passes through unclamped (mouse needs full range)
 			moveX = Mathf.Clamp(moveX, -1f, 1f);
 			moveY = Mathf.Clamp(moveY, -1f, 1f);
 
-
-            // ── Debug logging ───────────────────────────────────────────────
-            //GD.Print($"Input: moveX={moveX:F2}, moveY={moveY:F2}, lookX={lookX:F2}, lookY={lookY:F2}");
-
-            // ── Send axis events to V12 input system ──────────────────────────
+            // ── Send axis events ──
             inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "move_right", Value = moveX > 0 ? moveX : 0f });
 			inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "move_left", Value = moveX < 0 ? -moveX : 0f });
 			inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "move_forward", Value = moveY > 0 ? moveY : 0f });
@@ -189,7 +205,7 @@ public partial class RootLoop : Node3D
 			inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "look_down", Value = lookY < 0 ? -lookY : 0f });
             }
 
-			// ── Button events ─────────────────────────────────────────────────
+			// ── Button events ──
 			if (Input.IsActionJustPressed("jump"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "jump", Value = 1 });
 			if (Input.IsActionJustPressed("crouch"))
@@ -214,7 +230,7 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
 
-			// ── Fly mode events ────────────────────────────────────────────────
+			// ── Fly mode events ──
 			if (Input.IsActionJustPressed("fly_toggle"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "fly_toggle", Value = 1 });
 			if (Input.IsActionPressed("fly_up"))
@@ -222,7 +238,7 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionPressed("fly_down"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_down", Value = 1f });
 
-			// ── Controller button events ───────────────────────────────────────
+			// ── Controller button events ──
 			var currentJoy = new Dictionary<JoyButton, bool>();
 			for (int i = 0; i < (int)JoyButton.Max; i++)
 			{
@@ -248,7 +264,7 @@ public partial class RootLoop : Node3D
 			SendCtrlBtn("lean_right", JoyButton.RightShoulder);
 			SendCtrlBtn("esc", JoyButton.Start);
 
-			float ltAxis = Input.GetJoyAxis(0, (JoyAxis)4); // LeftTrigger
+			float ltAxis = Input.GetJoyAxis(0, (JoyAxis)4);
 			if (ltAxis > 0.15f)
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "run", Value = ltAxis });
 
@@ -256,23 +272,26 @@ public partial class RootLoop : Node3D
 			foreach (var kv in currentJoy)
 				_prevJoyButtons[kv.Key] = kv.Value;
 
-		
+		// ── Consume latest frame snapshot on main thread ──
+        while (_frameQueue.TryDequeue(out var frame))
+            _latestFrame = frame;
 
-        s.Update((float)delta);
-        audioPlayer.Update((float)delta);
+        if (_latestFrame != null)
+        {
+            renderer.ApplySnapshot(_latestFrame);
+            audioPlayer.ApplySnapshot(_latestFrame);
+        }
 
-        root.Update((float)delta);
-
-		List<IRenderable> renderables = root.GetAllRenderables();
-		
-			foreach (var r in renderables)
-			{
-				renderer.QueueItem(r);
-			}
-		
-		renderer.step();
-        //xm.Update();
         debug.Update((float)delta);
+    }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationPredelete)
+        {
+            _cts?.Cancel();
+            _v12Thread?.Join(1000);
+        }
     }
 }
 

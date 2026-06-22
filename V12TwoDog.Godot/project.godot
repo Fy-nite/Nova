@@ -19,6 +19,11 @@ config/features=PackedStringArray("4.7", "C#")
 run/max_fps=637
 config/icon="uid://c0pjr5qikrm80"
 
+[autoload]
+
+DebugMenu="*uid://cggqb75a8w8r"
+MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
+
 [display]
 
 window/size/viewport_width=1280

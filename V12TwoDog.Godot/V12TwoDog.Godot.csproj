@@ -16,17 +16,4 @@
   <ItemGroup>
     <Folder Include="addons\" />
   </ItemGroup>
-
-  <!-- Steam Audio native libraries -->
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <None Include="lib/windows-x64/phonon.dll" Link="phonon.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="lib/windows-x64/GPUUtilities.dll" Link="GPUUtilities.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="lib/windows-x64/TrueAudioNext.dll" Link="TrueAudioNext.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
 </Project>
