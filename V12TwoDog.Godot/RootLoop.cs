@@ -143,14 +143,15 @@ public partial class RootLoop : Node3D
         // ── Update XR tracking and input ──
         _xr?.Update();
 
-        // ── Sync V12 Player position to XROrigin3D for XR movement ──
+        // ── Sync V12 Player position + body rotation to XROrigin3D ──
         if (_xr?.IsAvailable == true && _xr.Origin != null)
         {
-            var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
-            if (player != null)
+            var xrInput = root.Registry.Get<IVRInputProvider>();
+            if (xrInput != null)
             {
-                var v12Pos = player.LocalTransform.Position;
-                _xr.Origin.Position = new Vector3(v12Pos.X, v12Pos.Y, v12Pos.Z);
+                var wp = xrInput.WorldPosition;
+                _xr.Origin.Position = new Vector3(wp.X, wp.Y, wp.Z);
+                _xr.Origin.Quaternion = new Godot.Quaternion(Vector3.Up, xrInput.BodyYaw);
             }
         }
 
