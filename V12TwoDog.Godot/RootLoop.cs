@@ -30,6 +30,7 @@ public partial class RootLoop : Node3D
 	Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
 	bool _mouseCaptured;
+    GodotXR _xr;
 
     // ── Threading ──
     private Thread _v12Thread;
@@ -85,7 +86,20 @@ public partial class RootLoop : Node3D
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
 
-        CallDeferred(nameof(SetMouseCaptured), true);
+        // ── Initialize XR (OpenXR) ──
+        var xrInput = root.Registry.Get<V12.Core.Input.InputService>();
+        _xr = new GodotXR(this, xrInput);
+        if (_xr.IsAvailable)
+        {
+            GD.Print("[RootLoop] XR support active.");
+        }
+        else
+        {
+            GD.Print("[RootLoop] XR not available, running in desktop mode.");
+        }
+
+        if (_xr?.IsAvailable != true)
+            CallDeferred(nameof(SetMouseCaptured), true);
 
         // ── Start V12 worker thread ──
         _cts = new CancellationTokenSource();
@@ -125,6 +139,9 @@ public partial class RootLoop : Node3D
 
 	public override void _Process(double delta)
 	{
+        // ── Update XR tracking and input ──
+        _xr?.Update();
+
         var inputService = root.Registry.Get<V12.Core.Input.InputService>();
 		if (inputService != null)
 		{
@@ -151,7 +168,7 @@ public partial class RootLoop : Node3D
 			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY);
 
             // ── Mouse look (sent as delta to worker thread via PlayerComponent) ──
-            if (_mouseCaptured && _mouseLook != Vector2.Zero)
+            if (_xr?.IsAvailable != true && _mouseCaptured && _mouseLook != Vector2.Zero)
             {
                 var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
                 if (player != null)
@@ -214,7 +231,8 @@ public partial class RootLoop : Node3D
 			if (Input.IsActionJustPressed("escape"))
 			{
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "esc", Value = 1 });
-				SetMouseCaptured(!_mouseCaptured);
+				if (_xr?.IsAvailable != true)
+					SetMouseCaptured(!_mouseCaptured);
 			}
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
@@ -280,6 +298,7 @@ public partial class RootLoop : Node3D
     {
         if (what == NotificationPredelete)
         {
+            _xr?.Cleanup();
             _cts?.Cancel();
             _v12Thread?.Join(1000);
         }
