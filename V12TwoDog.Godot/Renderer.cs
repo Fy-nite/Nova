@@ -176,7 +176,8 @@ namespace V12TwoDog
 				// Update properties
 				UpdateNodeProperties(node, rs);
 
-				// Update transform
+				// System.Numerics.Matrix4x4 uses row-vector convention (v * M),
+				// so rows ARE the basis vectors. Map row-i → Basis column-i.
 				var basis = new Basis(
 					new Vector3(rs.Transform.M11, rs.Transform.M12, rs.Transform.M13),
 					new Vector3(rs.Transform.M21, rs.Transform.M22, rs.Transform.M23),
@@ -266,7 +267,7 @@ namespace V12TwoDog
 				default:
 				{
 					var n = new Node3D();
-					n.Name = rs.Name;
+					n.Name = string.IsNullOrEmpty(rs.Name) ? $"Node_{rs.ElementId}" : rs.Name;
 					return n;
 				}
 			}

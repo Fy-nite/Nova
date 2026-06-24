@@ -90,17 +90,28 @@ public partial class RootLoop : Node3D
             GD.Print("[RootLoop] XR not available, running in desktop mode.");
         }
 
-		root.CreateWorld("TestWorld");
+        // Register Godot physics backend BEFORE root.Initialize so it is the
+        // first IPhysicsBackend in the registry (Bepu PhysicsService also implements
+        // the interface but is registered during Initialize and has no Simulation until
+        // manually initialized).
+        var godotPhysics = new V12TwoDog.GodotPhysicsBackend(GetTree().Root.World3D);
+        root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), godotPhysics);
+
+        root.CreateWorld("TestWorld");
 		root.Initialize();
 
         // Initialize physics services
-        root.Registry.Get<V12.Core.Systems.PhysicsService>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
 
         if (_xr?.IsAvailable != true)
             CallDeferred(nameof(SetMouseCaptured), true);
+
+        // ── Add scene lighting ──
+        var sun = new DirectionalLight3D();
+        sun.Rotation = new Vector3(Mathf.DegToRad(-45), Mathf.DegToRad(30), 0);
+        AddChild(sun);
 
         // ── Start V12 worker thread ──
         _cts = new CancellationTokenSource();

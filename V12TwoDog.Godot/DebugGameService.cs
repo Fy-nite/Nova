@@ -115,7 +115,7 @@ namespace V12TwoDog
                         }
                         else if (comp is PhysicsBodyComponent pbc)
                         {
-                            infoLines.Add($"{indent}      BodyHandle={pbc.BodyHandle.Value} IsKinematic={pbc.IsKinematic}");
+                            infoLines.Add($"{indent}      Body={(pbc.Body != null ? "set" : "null")} IsKinematic={pbc.IsKinematic}");
                         }
                     }
 
