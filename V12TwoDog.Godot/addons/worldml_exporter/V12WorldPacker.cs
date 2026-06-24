@@ -9,7 +9,8 @@ public static class V12WorldPacker
 {
     public static void PackWorld(Node sceneRoot, string outputPath)
     {
-        var xml = WorldMLExporter.ExportWorld(sceneRoot);
+        var worldName = Path.GetFileNameWithoutExtension(outputPath);
+        var xml = WorldMLExporter.ExportWorld(sceneRoot, worldName);
         var collectedAssets = new HashSet<string>();
         CollectAssets(sceneRoot, collectedAssets);
 
@@ -90,16 +91,32 @@ public static class V12WorldPacker
             if (!string.IsNullOrEmpty(path))
                 assets.Add(path);
 
-            for (int i = 0; i < mi.Mesh.GetSurfaceCount(); i++)
-            {
-                var mat = mi.GetSurfaceOverrideMaterial(i);
-                if (mat != null)
-                    CollectTexturesFromMat(mat, assets);
-            }
+            CollectSurfaceTextures(mi.Mesh, mi, assets);
+        }
 
-            var meshMat = mi.Mesh.SurfaceGetMaterial(0);
-            if (meshMat != null)
-                CollectTexturesFromMat(meshMat, assets);
+        if (node.GetClass() == "CSGMesh3D")
+        {
+            var meshVar = node.Get("mesh");
+            if (meshVar.VariantType != Variant.Type.Nil && meshVar.Obj is Mesh mesh)
+            {
+                var meshPath = mesh.ResourcePath;
+                if (!string.IsNullOrEmpty(meshPath))
+                    assets.Add(meshPath);
+
+                CollectSurfaceTextures(mesh, null, assets);
+            }
+        }
+    }
+
+    private static void CollectSurfaceTextures(Mesh mesh, MeshInstance3D mi, HashSet<string> assets)
+    {
+        for (int i = 0; i < mesh.GetSurfaceCount(); i++)
+        {
+            var mat = mi?.GetSurfaceOverrideMaterial(i);
+            if (mat == null)
+                mat = mesh.SurfaceGetMaterial(i);
+            if (mat != null)
+                CollectTexturesFromMat(mat, assets);
         }
     }
 

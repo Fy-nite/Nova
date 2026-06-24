@@ -20,49 +20,131 @@ public static class NodeConverter3D
         return s;
     }
 
-    public static string BuildMeshXml(Node3D node, string ind)
-    {
-        var cls = node.GetClass();
-        var s = "";
+	public static string BuildMeshXml(Node3D node, string ind, string worldName = null)
+	{
+		var cls = node.GetClass();
+		var s = "";
 
-        if (cls == "CSGBox3D")
-        {
-            var sz = (Vector3)node.Get("size");
-            s += MeshComponents(ind, "csg_mesh", "Box", sz.X, sz.Y, sz.Z);
-            s += CsgCollider(node, ind, "Box", sz.X, sz.Y, sz.Z);
-        }
-        else if (cls == "CSGSphere3D")
-        {
-            var r = (float)node.Get("radius");
-            s += MeshComponents(ind, "csg_mesh", "Sphere", r * 2f, r * 2f, r * 2f);
-            s += CsgCollider(node, ind, "Sphere", r * 2f, r * 2f, r * 2f);
-        }
-        else if (cls == "CSGCylinder3D")
-        {
-            var cr = (float)node.Get("radius");
-            var ch = (float)node.Get("height");
-            s += MeshComponents(ind, "csg_mesh", "Cylinder", cr * 2f, ch, cr * 2f);
-            s += CsgCollider(node, ind, "Cylinder", cr * 2f, ch, cr * 2f);
-        }
-        else if (cls == "CSGCapsule3D")
-        {
-            var r2 = (float)node.Get("radius");
-            var h2 = (float)node.Get("height");
-            s += MeshComponents(ind, "csg_mesh", "Capsule", r2 * 2f, h2, r2 * 2f);
-            s += CsgCollider(node, ind, "Capsule", r2 * 2f, h2, r2 * 2f);
-        }
-        else if (cls == "CSGPlane3D")
-        {
-            var psz = (Vector2)node.Get("size");
-            s += $"{ind}\t<ColliderComponent Shape=\"Plane\" Width=\"{psz.X:F3}\" Height=\"0.000\" Depth=\"{psz.Y:F3}\" />\n";
-            s += CsgCollider(node, ind, "Plane", psz.X, 0f, psz.Y);
-        }
+		if (cls == "CSGBox3D")
+		{
+			var sz = (Vector3)node.Get("size");
+			s += MeshComponents(ind, "csg_mesh", "Box", sz.X, sz.Y, sz.Z);
+			s += CsgCollider(node, ind, "Box", sz.X, sz.Y, sz.Z);
+			s += CsgMaterialXml(node, ind, worldName);
+		}
+		else if (cls == "CSGSphere3D")
+		{
+			var r = (float)node.Get("radius");
+			s += MeshComponents(ind, "csg_mesh", "Sphere", r * 2f, r * 2f, r * 2f);
+			s += CsgCollider(node, ind, "Sphere", r * 2f, r * 2f, r * 2f);
+			s += CsgMaterialXml(node, ind, worldName);
+		}
+		else if (cls == "CSGCylinder3D")
+		{
+			var cr = (float)node.Get("radius");
+			var ch = (float)node.Get("height");
+			s += MeshComponents(ind, "csg_mesh", "Cylinder", cr * 2f, ch, cr * 2f);
+			s += CsgCollider(node, ind, "Cylinder", cr * 2f, ch, cr * 2f);
+			s += CsgMaterialXml(node, ind, worldName);
+		}
+		else if (cls == "CSGCapsule3D")
+		{
+			var r2 = (float)node.Get("radius");
+			var h2 = (float)node.Get("height");
+			s += MeshComponents(ind, "csg_mesh", "Capsule", r2 * 2f, h2, r2 * 2f);
+			s += CsgCollider(node, ind, "Capsule", r2 * 2f, h2, r2 * 2f);
+			s += CsgMaterialXml(node, ind, worldName);
+		}
+		else if (cls == "CSGPlane3D")
+		{
+			var psz = (Vector2)node.Get("size");
+			s += $"{ind}\t<ColliderComponent Shape=\"Plane\" Width=\"{psz.X:F3}\" Height=\"0.000\" Depth=\"{psz.Y:F3}\" />\n";
+			s += CsgCollider(node, ind, "Plane", psz.X, 0f, psz.Y);
+			s += CsgMaterialXml(node, ind, worldName);
+		}
+		else if (cls == "CSGMesh3D")
+		{
+			s += CsgMesh3DComponents(node, ind, worldName);
+		}
 
-        if (node is MeshInstance3D mi)
-            s += MeshInstanceComponents(mi, ind);
+		if (node is MeshInstance3D mi)
+			s += MeshInstanceComponents(mi, ind, worldName);
 
-        return s;
-    }
+		return s;
+	}
+
+	private static string CsgMesh3DComponents(Node3D node, string ind, string worldName = null)
+	{
+		var meshVar = node.Get("mesh");
+		if (meshVar.VariantType == Variant.Type.Nil) return "";
+
+		var mesh = meshVar.AsGodotObject() as Mesh;
+		if (mesh == null) return "";
+
+		var mcls = mesh.GetClass();
+		var shapeName = "";
+		var w = 1.0; var h = 1.0; var d = 1.0;
+
+		if (mcls == "BoxMesh")
+		{
+			var sz = ((BoxMesh)mesh).Size;
+			shapeName = "Box"; w = sz.X; h = sz.Y; d = sz.Z;
+		}
+		else if (mcls == "SphereMesh")
+		{
+			var sm = (SphereMesh)mesh;
+			shapeName = "Sphere"; w = sm.Radius * 2.0; h = sm.Height; d = sm.Radius * 2.0;
+		}
+		else if (mcls == "CapsuleMesh")
+		{
+			var cm = (CapsuleMesh)mesh;
+			shapeName = "Capsule"; w = cm.Radius * 2.0; h = cm.Height; d = cm.Radius * 2.0;
+		}
+		else if (mcls == "CylinderMesh")
+		{
+			var cym = (CylinderMesh)mesh;
+			shapeName = "Cylinder"; w = cym.TopRadius * 2.0; h = cym.Height; d = cym.TopRadius * 2.0;
+		}
+		else if (mcls == "PlaneMesh")
+		{
+			var sz2 = ((PlaneMesh)mesh).Size;
+			shapeName = "Plane"; w = sz2.X; h = 0.0; d = sz2.Y;
+		}
+
+		var out_ = "";
+		if (shapeName != "")
+			out_ += MeshComponents(ind, "csg_mesh", shapeName, w, h, d);
+		else
+			out_ += $"{ind}\t<Component type=\"MeshComponent\" name=\"csg_mesh\" Shape=\"Custom\" />\n{ind}\t<Component type=\"MeshRenderer\" Mesh=\"csg_mesh\" />\n";
+
+		// Material from CSG node override or mesh surface
+		var matVar = node.Get("material");
+		StandardMaterial3D csgMat = null;
+		if (matVar.VariantType != Variant.Type.Nil && matVar.Obj is StandardMaterial3D smOverride)
+			csgMat = smOverride;
+		else if (mesh.GetSurfaceCount() > 0)
+		{
+			var surfMat = mesh.SurfaceGetMaterial(0);
+			if (surfMat is StandardMaterial3D smSurf)
+				csgMat = smSurf;
+		}
+
+		if (csgMat != null)
+			out_ += BuildMaterialXml(csgMat, ind, csgMat.ResourcePath, worldName);
+
+		return out_;
+	}
+
+	private static string CsgMaterialXml(Node3D node, string ind, string worldName = null)
+	{
+		var matVar = node.Get("material");
+		if (matVar.VariantType == Variant.Type.Nil) return "";
+
+		if (matVar.Obj is StandardMaterial3D sm)
+			return BuildMaterialXml(sm, ind, sm.ResourcePath, worldName);
+
+		return "";
+	}
 
     public static string BuildLightXml(Node3D node, string ind)
     {
@@ -223,7 +305,7 @@ public static class NodeConverter3D
         return $"{ind}\t<Component type=\"MeshComponent\" name=\"{meshName}\" Shape=\"{shape}\" Width=\"{w:F3}\" Height=\"{h:F3}\" Depth=\"{d:F3}\" />\n{ind}\t<Component type=\"MeshRenderer\" Mesh=\"{meshName}\" />\n";
     }
 
-    private static string MeshInstanceComponents(MeshInstance3D node, string ind)
+	private static string MeshInstanceComponents(MeshInstance3D node, string ind, string worldName = null)
     {
         var mesh = node.Mesh;
         if (mesh == null) return "";
@@ -267,33 +349,33 @@ public static class NodeConverter3D
             mat = mesh.SurfaceGetMaterial(0);
 
         if (mat is StandardMaterial3D sm)
-            out_ += BuildMaterialXml(sm, ind, mat.ResourcePath);
+            out_ += BuildMaterialXml(sm, ind, mat.ResourcePath, worldName);
 
         return out_;
     }
 
-    public static string BuildMaterialXml(StandardMaterial3D sm, string ind, string fallbackPath)
+    public static string BuildMaterialXml(StandardMaterial3D sm, string ind, string fallbackPath, string worldName = null)
     {
         var c = sm.AlbedoColor;
         var out_ = $"{ind}\t<MaterialComponent R=\"{c.R:F3}\" G=\"{c.G:F3}\" B=\"{c.B:F3}\" A=\"{c.A:F3}\" Metallic=\"{sm.Metallic:F3}\" Roughness=\"{sm.Roughness:F3}\"";
 
-        var albedoTexPath = TextureRelPath(sm.AlbedoTexture);
+        var albedoTexPath = TextureRelPath(sm.AlbedoTexture, worldName);
         if (albedoTexPath != null)
             out_ += $" AlbedoTexture=\"{albedoTexPath}\"";
 
-        var normalTexPath = TextureRelPath(sm.NormalTexture);
+        var normalTexPath = TextureRelPath(sm.NormalTexture, worldName);
         if (normalTexPath != null)
             out_ += $" NormalTexture=\"{normalTexPath}\"";
 
-        var metalTexPath = TextureRelPath(sm.MetallicTexture);
+        var metalTexPath = TextureRelPath(sm.MetallicTexture, worldName);
         if (metalTexPath != null)
             out_ += $" MetallicTexture=\"{metalTexPath}\"";
 
-        var roughTexPath = TextureRelPath(sm.RoughnessTexture);
+        var roughTexPath = TextureRelPath(sm.RoughnessTexture, worldName);
         if (roughTexPath != null)
             out_ += $" RoughnessTexture=\"{roughTexPath}\"";
 
-        var emissionTexPath = TextureRelPath(sm.EmissionTexture);
+        var emissionTexPath = TextureRelPath(sm.EmissionTexture, worldName);
         if (emissionTexPath != null)
             out_ += $" EmissionTexture=\"{emissionTexPath}\"";
 
@@ -305,13 +387,16 @@ public static class NodeConverter3D
         return out_;
     }
 
-    private static string TextureRelPath(Texture2D tex)
+    private static string TextureRelPath(Texture2D tex, string worldName = null)
     {
         if (tex == null) return null;
         var texPath = tex.ResourcePath;
         if (string.IsNullOrEmpty(texPath)) return null;
         if (!texPath.StartsWith("res://")) return null;
-        return texPath.Substring("res://".Length);
+        var rel = texPath.Substring("res://".Length);
+        if (!string.IsNullOrEmpty(worldName))
+            return $"v12://{worldName}/{rel}";
+        return rel;
     }
 
     private static string CsgCollider(Node3D node, string ind, string shape, double w, double h, double d)

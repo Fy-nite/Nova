@@ -8,11 +8,13 @@ using V12.Components;
 
 namespace V12TwoDog
 {
-	public class Renderer : IRenderer
+		public class Renderer : IRenderer
 	{
 		private readonly List<IRenderable> _renderables = new List<IRenderable>();
 		public SceneTree root;
 		private Dictionary<long, Node3D> _nodesByElementId = new();
+		private Dictionary<string, StandardMaterial3D> _materialCache = new();
+		private Dictionary<string, Texture2D> _textureCache = new();
 
 		public Renderer(SceneTree t)
 		{
@@ -294,6 +296,14 @@ namespace V12TwoDog
 					}
 					break;
 				}
+				case SnapshotNodeType.MeshBox:
+				case SnapshotNodeType.MeshSphere:
+				case SnapshotNodeType.MeshCustom:
+				{
+					if (node is MeshInstance3D mi)
+						ApplyMeshMaterial(mi, rs);
+					break;
+				}
 				case SnapshotNodeType.Sprite:
 				{
 					if (node is Sprite3D sprite3D)
@@ -358,9 +368,66 @@ namespace V12TwoDog
 			throw new NotImplementedException();
 		}
 
+        private void ApplyMeshMaterial(MeshInstance3D mi, RenderableSnapshot rs)
+        {
+            // Skip if no material data
+            if (rs.MatA == 0f && rs.MatR == 0f && rs.MatG == 0f && rs.MatB == 0f
+                && rs.MatMetallic == 0f && rs.MatRoughness == 0.5f
+                && string.IsNullOrEmpty(rs.MatTexturePath))
+                return;
+
+            var cacheKey = $"{rs.ElementId}";
+            if (!_materialCache.TryGetValue(cacheKey, out var mat))
+            {
+                mat = new StandardMaterial3D();
+                _materialCache[cacheKey] = mat;
+            }
+
+            mat.AlbedoColor = new Color(rs.MatR, rs.MatG, rs.MatB, rs.MatA);
+            mat.Metallic = rs.MatMetallic;
+            mat.Roughness = rs.MatRoughness;
+
+            // Load and set texture
+            if (!string.IsNullOrEmpty(rs.MatTexturePath))
+            {
+                var texPath = ResolveAssetPath(rs.MatTexturePath);
+                Texture2D tex2D = null;
+                if (!string.IsNullOrEmpty(texPath))
+                {
+                    if (!_textureCache.TryGetValue(texPath, out tex2D))
+                    {
+                        if (System.IO.File.Exists(texPath))
+                        {
+                            var img = new Image();
+                            if (img.Load(texPath) == Error.Ok)
+                                tex2D = ImageTexture.CreateFromImage(img);
+                        }
+                        else
+                        {
+                            tex2D = GD.Load<Texture2D>(texPath);
+                        }
+                        if (tex2D != null)
+                            _textureCache[texPath] = tex2D;
+                    }
+                }
+                if (tex2D != null)
+                    mat.AlbedoTexture = tex2D;
+            }
+
+            mi.MaterialOverride = mat;
+        }
+
         private static string ResolveAssetPath(string path)
         {
-            return V12.Core.V12AssetResolver.ResolveGlobal(path);
+            if (string.IsNullOrEmpty(path)) return path;
+            var resolved = V12.Core.V12AssetResolver.ResolveGlobal(path);
+            if (resolved != path) return resolved;
+            // Try relative resolution against the default mount point
+            var root = V12.Core.GameRoot.Instance;
+            var resolver = root?.Registry?.Get<V12.Core.Interfaces.IAssetResolver>();
+            if (resolver is V12.Core.V12AssetResolver vr)
+                return vr.ResolveRelative(path);
+            return resolved;
         }
 	}
 }

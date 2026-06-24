@@ -77,6 +77,19 @@ public partial class RootLoop : Node3D
         debug.Initialize(root);
         root.Registry.Register("DebugGameService", debug );
 
+		// ── Initialize XR before bootstrap so it can check availability ──
+		var xrInput = root.Registry.Get<V12.Core.Input.InputService>();
+        _xr = new GodotXR(this, xrInput);
+        if (_xr.IsAvailable)
+        {
+            root.Registry.Register("IVRInputProvider", _xr.PoseProvider);
+            GD.Print("[RootLoop] XR support active.");
+        }
+        else
+        {
+            GD.Print("[RootLoop] XR not available, running in desktop mode.");
+        }
+
 		root.CreateWorld("TestWorld");
 		root.Initialize();
 
@@ -85,18 +98,6 @@ public partial class RootLoop : Node3D
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
-
-        // ── Initialize XR (OpenXR) ──
-        var xrInput = root.Registry.Get<V12.Core.Input.InputService>();
-        _xr = new GodotXR(this, xrInput);
-        if (_xr.IsAvailable)
-        {
-            GD.Print("[RootLoop] XR support active.");
-        }
-        else
-        {
-            GD.Print("[RootLoop] XR not available, running in desktop mode.");
-        }
 
         if (_xr?.IsAvailable != true)
             CallDeferred(nameof(SetMouseCaptured), true);
@@ -141,6 +142,17 @@ public partial class RootLoop : Node3D
 	{
         // ── Update XR tracking and input ──
         _xr?.Update();
+
+        // ── Sync V12 Player position to XROrigin3D for XR movement ──
+        if (_xr?.IsAvailable == true && _xr.Origin != null)
+        {
+            var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+            if (player != null)
+            {
+                var v12Pos = player.LocalTransform.Position;
+                _xr.Origin.Position = new Vector3(v12Pos.X, v12Pos.Y, v12Pos.Z);
+            }
+        }
 
         var inputService = root.Registry.Get<V12.Core.Input.InputService>();
 		if (inputService != null)

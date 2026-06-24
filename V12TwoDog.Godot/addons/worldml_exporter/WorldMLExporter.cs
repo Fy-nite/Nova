@@ -11,12 +11,12 @@ public static class WorldMLExporter
         "CharacterBody3D", "Area3D", "CollisionShape3D", "CollisionPolygon3D"
     };
 
-    public static string ExportWorld(Node root)
+    public static string ExportWorld(Node root, string worldName = null)
     {
         var s = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
         s += $"<World name=\"{root.Name}\">\n";
         foreach (Node child in root.GetChildren())
-            s += AppendElementForNode(child, 1);
+            s += AppendElementForNode(child, 1, worldName);
         s += "</World>\n";
         return s;
     }
@@ -35,7 +35,7 @@ public static class WorldMLExporter
         return "";
     }
 
-    private static string AppendElementForNode(Node node, int indent)
+    private static string AppendElementForNode(Node node, int indent, string worldName = null)
     {
         var out_ = "";
         var ind = new string('\t', indent);
@@ -44,7 +44,7 @@ public static class WorldMLExporter
         if (SkipClasses.Contains(cls))
         {
             foreach (Node c in node.GetChildren())
-                out_ += AppendElementForNode(c, indent);
+                out_ += AppendElementForNode(c, indent, worldName);
             return out_;
         }
 
@@ -64,7 +64,7 @@ public static class WorldMLExporter
             if (node.IsInGroup("SpawnPoint") && !IsComponentNode(node))
                 out_ += $"{ind}\t<SpawnPointComponent />\n";
 
-            out_ += NodeConverter3D.BuildMeshXml(n3d, ind);
+            out_ += NodeConverter3D.BuildMeshXml(n3d, ind, worldName);
             out_ += NodeConverter3D.HarvestCollider(n3d, ind);
             out_ += NodeConverter3D.BuildRigidBodyXml(n3d, ind);
             out_ += NodeConverter3D.BuildLightXml(n3d, ind);
@@ -86,7 +86,7 @@ public static class WorldMLExporter
                 var ccls = c.GetClass();
                 if (SkipClasses.Contains(ccls)) continue;
                 if (IsComponentNode(c) && c is not Node3D) continue;
-                out_ += AppendElementForNode(c, indent + 1);
+                out_ += AppendElementForNode(c, indent + 1, worldName);
             }
 
             out_ += $"{ind}</Element>\n";
@@ -105,7 +105,7 @@ public static class WorldMLExporter
             foreach (Node c in node.GetChildren())
             {
                 if (IsComponentNode(c) && c is not Control && c is not Node3D) continue;
-                out_ += AppendElementForNode(c, indent + 1);
+                out_ += AppendElementForNode(c, indent + 1, worldName);
             }
 
             out_ += $"{ind}</Element>\n";
@@ -124,7 +124,7 @@ public static class WorldMLExporter
             foreach (Node c in node.GetChildren())
             {
                 if (IsComponentNode(c) && c is not Node3D) continue;
-                out_ += AppendElementForNode(c, indent + 1);
+                out_ += AppendElementForNode(c, indent + 1, worldName);
             }
 
             out_ += $"{ind}</Element>\n";
@@ -168,7 +168,7 @@ public static class WorldMLExporter
         else
         {
             foreach (Node c in node.GetChildren())
-                out_ += AppendElementForNode(c, indent);
+                out_ += AppendElementForNode(c, indent, worldName);
         }
 
         return out_;
