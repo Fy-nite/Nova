@@ -262,10 +262,7 @@ namespace V12TwoDog
             _syncPending = false;
 
             if (!BodyRid.IsValid)
-            {
-                GD.PrintErr($"[Phys] SyncToGodot: BodyRid invalid, skipping");
                 return;
-            }
 
             var vel = new Vector3(_cachedVelocity.X, _cachedVelocity.Y, _cachedVelocity.Z);
             _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity, vel);
@@ -284,7 +281,6 @@ namespace V12TwoDog
                     new Transform3D(newBasis, newOrigin));
             }
 
-            GD.Print($"[Phys] SyncToGodot: body={Id} dynamic={IsDynamic} vel=({_cachedVelocity.X:F2},{_cachedVelocity.Y:F2},{_cachedVelocity.Z:F2})");
         }
 
         /// <summary>
@@ -294,10 +290,7 @@ namespace V12TwoDog
         internal void ReadbackFromGodot()
         {
             if (!BodyRid.IsValid)
-            {
-                GD.PrintErr($"[Phys] ReadbackFromGodot: BodyRid invalid, skipping");
                 return;
-            }
 
             var resultXform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
             _cachedPosition = new NumVec3(resultXform.Origin.X, resultXform.Origin.Y, resultXform.Origin.Z);
@@ -305,7 +298,6 @@ namespace V12TwoDog
             _cachedRotation = new NumQuat(q.X, q.Y, q.Z, q.W);
             var vel = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
             _cachedVelocity = new NumVec3(vel.X, vel.Y, vel.Z);
-            GD.Print($"[Phys] Readback: pos=({_cachedPosition.X:F2},{_cachedPosition.Y:F2},{_cachedPosition.Z:F2}) vel=({_cachedVelocity.X:F2},{_cachedVelocity.Y:F2},{_cachedVelocity.Z:F2})");
         }
     }
 }
