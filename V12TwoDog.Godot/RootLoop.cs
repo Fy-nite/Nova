@@ -30,7 +30,8 @@ public partial class RootLoop : Node3D
 	Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
 	bool _mouseCaptured;
-    GodotXR _xr;
+	GodotXR _xr;
+    GodotPhysicsBackend _godotPhysics;
 
     // ── Threading ──
     private Thread _v12Thread;
@@ -94,8 +95,8 @@ public partial class RootLoop : Node3D
         // first IPhysicsBackend in the registry (Bepu PhysicsService also implements
         // the interface but is registered during Initialize and has no Simulation until
         // manually initialized).
-        var godotPhysics = new V12TwoDog.GodotPhysicsBackend(GetTree().Root.World3D);
-        root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), godotPhysics);
+        _godotPhysics = new V12TwoDog.GodotPhysicsBackend(GetTree().Root.World3D);
+        root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _godotPhysics);
 
         root.CreateWorld("TestWorld");
 		root.Initialize();
@@ -305,7 +306,13 @@ public partial class RootLoop : Node3D
 			foreach (var kv in currentJoy)
 				_prevJoyButtons[kv.Key] = kv.Value;
 
-		// ── Consume latest frame snapshot on main thread ──
+		// ── Flush deferred Godot API calls from the V12 worker thread ──
+        GodotMainThread.FlushPending();
+
+        // ── Read physics results back after Godot's physics tick ──
+        _godotPhysics?.ReadbackAll();
+
+        // ── Consume latest frame snapshot on main thread ──
         while (_frameQueue.TryDequeue(out var frame))
             _latestFrame = frame;
 

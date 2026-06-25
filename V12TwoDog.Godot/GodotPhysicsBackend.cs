@@ -18,47 +18,46 @@ namespace V12TwoDog
         public GodotPhysicsBackend(World3D world3d)
         {
             _server = PhysicsServer3D.Singleton;
-            // Use the main world space — guaranteed to be stepped by Godot's physics
-            // tick and has proper collision detection between all body types.
             _space = world3d.GetSpace();
         }
 
         public IPhysicsBody CreateBody(in PhysicsBodyDesc desc)
         {
             long id = _nextId++;
-            var body = new GodotPhysicsBody(id) { GravityScale = desc.GravityScale };
-
-            var bodyRid = _server.BodyCreate();
-            _server.BodySetSpace(bodyRid, _space);
-
-            body.IsDynamic = !desc.IsKinematic;
-            var mode = desc.IsKinematic ? PhysicsServer3D.BodyMode.Static : PhysicsServer3D.BodyMode.Rigid;
-            _server.BodySetMode(bodyRid, mode);
-
-            var shapeRid = CreateShapeRid(desc.Shape, desc.Size);
-            // Shape transform is relative to the body — keep it at identity
-            _server.BodyAddShape(bodyRid, shapeRid, Transform3D.Identity, disabled: false);
-
-            // Set the body's world transform from the desc
-            var origin = new Vector3(desc.Position.X, desc.Position.Y, desc.Position.Z);
-            var bodyXform = Transform3D.Identity with { Origin = origin, Basis = Basis.Identity };
-            if (desc.Rotation.LengthSquared() > 0f)
+            var descCopy = desc;
+            var body = new GodotPhysicsBody(id, descCopy)
             {
-                var r = new Quaternion(desc.Rotation.X, desc.Rotation.Y, desc.Rotation.Z, desc.Rotation.W);
-                bodyXform = bodyXform with { Basis = new Basis(r) };
-            }
-            _server.BodySetState(bodyRid, PhysicsServer3D.BodyState.Transform, bodyXform);
+                GravityScale = descCopy.GravityScale,
+                IsDynamic = !descCopy.IsKinematic
+            };
 
-            // V12 owns gravity via LocomotionComponent.Gravity applied to velocity
-            // in LocomotionSystem.  Disable Godot's built-in gravity so the two
-            // don't fight each other.
-            _server.BodySetParam(bodyRid, PhysicsServer3D.BodyParameter.GravityScale, 0f);
+            GodotMainThread.Execute(() =>
+            {
+                var bodyRid = _server.BodyCreate();
+                _server.BodySetSpace(bodyRid, _space);
 
-            // Keep body awake so it responds to velocity changes
-            _server.BodySetState(bodyRid, PhysicsServer3D.BodyState.Sleeping, false);
+                var mode = descCopy.IsKinematic ? PhysicsServer3D.BodyMode.Static : PhysicsServer3D.BodyMode.Rigid;
+                _server.BodySetMode(bodyRid, mode);
 
-            body.BodyRid = bodyRid;
-            body.ShapeRid = shapeRid;
+                var shapeRid = CreateShapeRid(descCopy.Shape, descCopy.Size);
+                _server.BodyAddShape(bodyRid, shapeRid, Transform3D.Identity, disabled: false);
+
+                var origin = new Vector3(descCopy.Position.X, descCopy.Position.Y, descCopy.Position.Z);
+                var bodyXform = Transform3D.Identity with { Origin = origin, Basis = Basis.Identity };
+                if (descCopy.Rotation.LengthSquared() > 0f)
+                {
+                    var r = new Quaternion(descCopy.Rotation.X, descCopy.Rotation.Y, descCopy.Rotation.Z, descCopy.Rotation.W);
+                    bodyXform = bodyXform with { Basis = new Basis(r) };
+                }
+                _server.BodySetState(bodyRid, PhysicsServer3D.BodyState.Transform, bodyXform);
+
+                _server.BodySetState(bodyRid, PhysicsServer3D.BodyState.Sleeping, false);
+
+                body.BodyRid = bodyRid;
+                body.ShapeRid = shapeRid;
+                body._syncPending = false;
+            });
+
             _bodies[id] = body;
             return body;
         }
@@ -68,10 +67,13 @@ namespace V12TwoDog
             if (body is GodotPhysicsBody gb)
             {
                 _bodies.Remove(gb.Id);
-                if (gb.ShapeRid.IsValid)
-                    _server.FreeRid(gb.ShapeRid);
-                if (gb.BodyRid.IsValid)
-                    _server.FreeRid(gb.BodyRid);
+                GodotMainThread.Execute(() =>
+                {
+                    if (gb.ShapeRid.IsValid)
+                        _server.FreeRid(gb.ShapeRid);
+                    if (gb.BodyRid.IsValid)
+                        _server.FreeRid(gb.BodyRid);
+                });
             }
         }
 
@@ -113,10 +115,23 @@ namespace V12TwoDog
 
         public void Step(float deltaTime)
         {
-            // Godot's PhysicsServer3D steps all spaces (including custom) automatically
-            // during the engine's physics tick. V12 sets initial velocity via
-            // BodySetState, and the physics server handles integration, gravity, and
-            // collision response asynchronously.
+        }
+
+        public void SyncBodies()
+        {
+            foreach (var body in _bodies.Values)
+                body.Sync();
+        }
+
+        /// <summary>
+        /// Read the latest positions/velocities from all Godot physics bodies back into
+        /// local caches. Called from the main thread AFTER the physics tick so the
+        /// cached values reflect collision response and gravity.
+        /// </summary>
+        public void ReadbackAll()
+        {
+            foreach (var body in _bodies.Values)
+                body.ReadbackFromGodot();
         }
 
         private Rid CreateShapeRid(MeshShape shape, NumVec3 size)
@@ -168,61 +183,129 @@ namespace V12TwoDog
         public float GravityScale { get; set; } = 1f;
         public bool IsDynamic { get; set; } = true;
 
-        public GodotPhysicsBody(long id)
+        // Local caches — read/written from worker thread, synced to Godot on main thread
+        internal volatile bool _syncPending = true;
+        private NumVec3 _cachedPosition;
+        private NumQuat _cachedRotation;
+        private NumVec3 _cachedVelocity;
+
+        public GodotPhysicsBody(long id, PhysicsBodyDesc desc)
         {
             Id = id;
             _server = PhysicsServer3D.Singleton;
+            _cachedPosition = desc.Position;
+            _cachedRotation = desc.Rotation;
+            _cachedVelocity = NumVec3.Zero;
         }
 
         public NumVec3 Position
         {
-            get
-            {
-                var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
-                return new NumVec3(xform.Origin.X, xform.Origin.Y, xform.Origin.Z);
-            }
+            get => _cachedPosition;
             set
             {
-                var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
-                _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.Transform,
-                    new Transform3D(xform.Basis, new Vector3(value.X, value.Y, value.Z)));
+                _cachedPosition = value;
+                EnqueueSync();
             }
         }
 
         public NumQuat Rotation
         {
-            get
-            {
-                var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
-                var q = xform.Basis.GetRotationQuaternion();
-                return new NumQuat(q.X, q.Y, q.Z, q.W);
-            }
+            get => _cachedRotation;
             set
             {
-                var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
-                var b = new Basis(new Quaternion(value.X, value.Y, value.Z, value.W));
-                _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.Transform,
-                    new Transform3D(b, xform.Origin));
+                _cachedRotation = value;
+                EnqueueSync();
             }
         }
 
         public NumVec3 LinearVelocity
         {
-            get
-            {
-                var v = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
-                return new NumVec3(v.X, v.Y, v.Z);
-            }
+            get => _cachedVelocity;
             set
             {
-                _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity,
-                    new Vector3(value.X, value.Y, value.Z));
+                _cachedVelocity = value;
+                EnqueueSync();
             }
         }
 
         public void AddForce(NumVec3 force)
         {
-            _server.BodyApplyImpulse(BodyRid, new Vector3(force.X, force.Y, force.Z), null);
+            GodotMainThread.Execute(() =>
+            {
+                if (!BodyRid.IsValid) return;
+                _server.BodyApplyImpulse(BodyRid, new Vector3(force.X, force.Y, force.Z), null);
+            });
+        }
+
+        private void EnqueueSync()
+        {
+            if (_syncPending) return;
+            _syncPending = true;
+            GodotMainThread.Execute(SyncToGodot);
+        }
+
+        /// <summary>
+        /// Push local cached state to Godot's PhysicsServer3D (write).
+        /// Called from GodotMainThread.FlushPending() on the main thread.
+        /// For rigid (dynamic) bodies only velocity is written — the physics tick
+        /// integrates it into position.  For kinematic bodies both position and
+        /// velocity are written since the element transform drives those.
+        /// </summary>
+        internal void Sync()
+        {
+            if (!_syncPending) return;
+            _syncPending = false;
+            SyncToGodot();
+        }
+        private void SyncToGodot()
+        {
+            _syncPending = false;
+
+            if (!BodyRid.IsValid)
+            {
+                GD.PrintErr($"[Phys] SyncToGodot: BodyRid invalid, skipping");
+                return;
+            }
+
+            var vel = new Vector3(_cachedVelocity.X, _cachedVelocity.Y, _cachedVelocity.Z);
+            _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity, vel);
+
+            if (!IsDynamic)
+            {
+                var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
+                var newOrigin = new Vector3(_cachedPosition.X, _cachedPosition.Y, _cachedPosition.Z);
+                var newBasis = xform.Basis;
+                if (_cachedRotation.LengthSquared() > 0f)
+                {
+                    newBasis = new Basis(new Quaternion(
+                        _cachedRotation.X, _cachedRotation.Y, _cachedRotation.Z, _cachedRotation.W));
+                }
+                _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.Transform,
+                    new Transform3D(newBasis, newOrigin));
+            }
+
+            GD.Print($"[Phys] SyncToGodot: body={Id} dynamic={IsDynamic} vel=({_cachedVelocity.X:F2},{_cachedVelocity.Y:F2},{_cachedVelocity.Z:F2})");
+        }
+
+        /// <summary>
+        /// Read the latest state from Godot's PhysicsServer3D back into local caches.
+        /// Called from the main thread after Godot's physics tick, separate from writes.
+        /// </summary>
+        internal void ReadbackFromGodot()
+        {
+            if (!BodyRid.IsValid)
+            {
+                GD.PrintErr($"[Phys] ReadbackFromGodot: BodyRid invalid, skipping");
+                return;
+            }
+
+            var resultXform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
+            _cachedPosition = new NumVec3(resultXform.Origin.X, resultXform.Origin.Y, resultXform.Origin.Z);
+            var q = resultXform.Basis.GetRotationQuaternion();
+            _cachedRotation = new NumQuat(q.X, q.Y, q.Z, q.W);
+            var vel = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
+            _cachedVelocity = new NumVec3(vel.X, vel.Y, vel.Z);
+            GD.Print($"[Phys] Readback: pos=({_cachedPosition.X:F2},{_cachedPosition.Y:F2},{_cachedPosition.Z:F2}) vel=({_cachedVelocity.X:F2},{_cachedVelocity.Y:F2},{_cachedVelocity.Z:F2})");
         }
     }
 }

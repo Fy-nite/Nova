@@ -242,13 +242,43 @@ namespace V12TwoDog
 								}
 								var arrays = new Variant[13];
 								arrays[0] = verts;
+
+								var normals = new Vector3[verts.Length];
 								if (rs.MeshIndices != null && rs.MeshIndices.Length > 0)
 								{
 									var idx = new int[rs.MeshIndices.Length];
 									for (int i = 0; i < idx.Length; i++)
 										idx[i] = (int)rs.MeshIndices[i];
 									arrays[12] = idx;
+
+									for (int i = 0; i < idx.Length; i += 3)
+									{
+										var v0 = verts[idx[i]];
+										var v1 = verts[idx[i + 1]];
+										var v2 = verts[idx[i + 2]];
+										var n = (v1 - v0).Cross(v2 - v0).Normalized();
+										normals[idx[i]] += n;
+										normals[idx[i + 1]] += n;
+										normals[idx[i + 2]] += n;
+									}
 								}
+								else
+								{
+									for (int i = 0; i < verts.Length; i += 3)
+									{
+										var v0 = verts[i];
+										var v1 = verts[i + 1];
+										var v2 = verts[i + 2];
+										var n = (v1 - v0).Cross(v2 - v0).Normalized();
+										normals[i] += n;
+										normals[i + 1] += n;
+										normals[i + 2] += n;
+									}
+								}
+								for (int i = 0; i < normals.Length; i++)
+									normals[i] = normals[i].Normalized();
+								arrays[1] = normals;
+
 								item.Mesh = new ArrayMesh();
 								((ArrayMesh)item.Mesh).AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, new global::Godot.Collections.Array(arrays));
 							}
@@ -371,9 +401,9 @@ namespace V12TwoDog
 
         private void ApplyMeshMaterial(MeshInstance3D mi, RenderableSnapshot rs)
         {
-            // Skip if no material data
+            // Skip if no material data (RenderableSnapshot struct defaults all floats to 0)
             if (rs.MatA == 0f && rs.MatR == 0f && rs.MatG == 0f && rs.MatB == 0f
-                && rs.MatMetallic == 0f && rs.MatRoughness == 0.5f
+                && rs.MatMetallic == 0f && rs.MatRoughness == 0f
                 && string.IsNullOrEmpty(rs.MatTexturePath))
                 return;
 
