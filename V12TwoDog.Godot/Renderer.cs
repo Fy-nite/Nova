@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Godot;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
@@ -418,47 +419,182 @@ namespace V12TwoDog
             mat.Metallic = rs.MatMetallic;
             mat.Roughness = rs.MatRoughness;
 
-            // Load and set texture
             if (!string.IsNullOrEmpty(rs.MatTexturePath))
             {
-                var texPath = ResolveAssetPath(rs.MatTexturePath);
-                Texture2D tex2D = null;
-                if (!string.IsNullOrEmpty(texPath))
-                {
-                    if (!_textureCache.TryGetValue(texPath, out tex2D))
-                    {
-                        if (System.IO.File.Exists(texPath))
-                        {
-                            var img = new Image();
-                            if (img.Load(texPath) == Error.Ok)
-                                tex2D = ImageTexture.CreateFromImage(img);
-                        }
-                        else
-                        {
-                            tex2D = GD.Load<Texture2D>(texPath);
-                        }
-                        if (tex2D != null)
-                            _textureCache[texPath] = tex2D;
-                    }
-                }
+                var tex2D = LoadTextureFromAnywhere(rs.MatTexturePath);
                 if (tex2D != null)
                     mat.AlbedoTexture = tex2D;
             }
 
+            mat.Uv1Offset = new Vector3(rs.MatUvOffsetX, rs.MatUvOffsetY, 0f);
+            mat.Uv1Scale = new Vector3(rs.MatUvScaleX, rs.MatUvScaleY, 1f);
+
             mi.MaterialOverride = mat;
+        }
+
+        private Texture2D LoadTextureFromAnywhere(string texturePath)
+        {
+            if (string.IsNullOrEmpty(texturePath)) return null;
+            if (_textureCache.TryGetValue(texturePath, out var cached))
+                return cached;
+
+            Texture2D tex2D = null;
+
+            // Strategy 1: Direct v12:// resolution via the asset resolver
+            if (tex2D == null && texturePath.StartsWith("v12://", StringComparison.OrdinalIgnoreCase))
+            {
+                var root = V12.Core.GameRoot.Instance;
+                if (root == null)
+                    GD.Print($"[Tex] S1 v12:// — GameRoot.Instance is NULL");
+                else
+                {
+                    var resolver = root.Registry?.Get<V12.Core.Interfaces.IAssetResolver>();
+                    if (resolver != null)
+                    {
+                        string phys = resolver.Resolve(texturePath);
+                        GD.Print($"[Tex] S1 v12:// → resolved: '{phys}' exists={File.Exists(phys)}");
+                        if (!string.IsNullOrEmpty(phys) && phys != texturePath && File.Exists(phys))
+                            tex2D = LoadTextureFile(phys);
+                    }
+                    else
+                    {
+                        int regCount = root.Registry?.GetServices()?.Count ?? -1;
+                        GD.Print($"[Tex] S1 v12:// — IAssetResolver NOT in registry (registered services: {regCount})");
+                    }
+                }
+            }
+
+            // Strategy 2: Resolve via asset system and load from physical path
+            if (tex2D == null)
+            {
+                string resolved = ResolveAssetPath(texturePath);
+                GD.Print($"[Tex] S2 ResolveAssetPath('{texturePath}') → '{resolved}' exists={File.Exists(resolved)}");
+                if (!string.IsNullOrEmpty(resolved) && File.Exists(resolved))
+                    tex2D = LoadTextureFile(resolved);
+            }
+
+            // Strategy 3: Search all world extract paths by filename
+            if (tex2D == null)
+            {
+                string cleanName = Path.GetFileName(StripResPrefix(texturePath));
+                GD.Print($"[Tex] S3 searching worlds for '{cleanName}'");
+                if (!string.IsNullOrEmpty(cleanName))
+                {
+                    var root = V12.Core.GameRoot.Instance;
+                    if (root != null)
+                    {
+                        int worldCount = root.Worlds.Count;
+                        GD.Print($"[Tex] S3 GameRoot.Worlds count={worldCount}");
+                        foreach (var w in root.Worlds)
+                        {
+                            if (string.IsNullOrEmpty(w.ExtractPath) || !Directory.Exists(w.ExtractPath))
+                                continue;
+                            foreach (var f in Directory.EnumerateFiles(w.ExtractPath, cleanName, SearchOption.AllDirectories))
+                            {
+                                GD.Print($"[Tex] S3 found candidate: '{f}'");
+                                tex2D = LoadTextureFile(f);
+                                if (tex2D != null) break;
+                            }
+                            if (tex2D != null) break;
+                        }
+                    }
+                }
+            }
+
+            // Strategy 4: Last resort, try GD.Load (only for res:// paths, not v12://)
+            if (tex2D == null && !string.IsNullOrEmpty(texturePath)
+                && texturePath.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+            {
+                GD.Print($"[Tex] S4 GD.Load('{texturePath}')");
+                tex2D = GD.Load<Texture2D>(texturePath);
+            }
+
+            if (tex2D != null)
+                GD.Print($"[Tex] Loaded OK: '{texturePath}'");
+            else
+                GD.Print($"[Tex] FAILED: '{texturePath}'");
+
+            if (tex2D != null)
+                _textureCache[texturePath] = tex2D;
+
+            return tex2D;
+        }
+
+        private static Texture2D LoadTextureFile(string filePath)
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(filePath);
+                var img = new Image();
+                Error err;
+                switch (Path.GetExtension(filePath).ToLowerInvariant())
+                {
+                    case ".png":  err = img.LoadPngFromBuffer(bytes); break;
+                    case ".jpg":
+                    case ".jpeg": err = img.LoadJpgFromBuffer(bytes); break;
+                    case ".webp": err = img.LoadWebpFromBuffer(bytes); break;
+                    case ".ktx":  err = img.LoadKtxFromBuffer(bytes); break;
+                    case ".bmp":  err = img.LoadBmpFromBuffer(bytes); break;
+                    case ".tga":  err = img.LoadTgaFromBuffer(bytes); break;
+                    default:      err = img.Load(filePath); break;
+                }
+                if (err == Error.Ok)
+                    return ImageTexture.CreateFromImage(img);
+                GD.Print($"[Tex] LoadTextureFile '{filePath}' Image.Load returned {err}");
+            }
+            catch (Exception ex)
+            {
+                GD.Print($"[Tex] LoadTextureFile '{filePath}' threw {ex.GetType().Name}: {ex.Message}");
+            }
+            return null;
         }
 
         private static string ResolveAssetPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return path;
+
+            // 1. Resolve via global v12:// handler
             var resolved = V12.Core.V12AssetResolver.ResolveGlobal(path);
             if (resolved != path) return resolved;
-            // Try relative resolution against the default mount point
+
             var root = V12.Core.GameRoot.Instance;
+
+            // 2. Resolve via the globally registered asset resolver (has mount info)
             var resolver = root?.Registry?.Get<V12.Core.Interfaces.IAssetResolver>();
             if (resolver is V12.Core.V12AssetResolver vr)
-                return vr.ResolveRelative(path);
+            {
+                var rel = vr.ResolveRelative(path);
+                if (rel != path) return rel;
+            }
+
+            // 3. Fallback: walk worlds and try their ExtractPath directly
+            if (root != null)
+            {
+                string cleanPath = StripResPrefix(path);
+                foreach (var w in root.Worlds)
+                {
+                    if (!string.IsNullOrEmpty(w.ExtractPath))
+                    {
+                        var combined = Path.Combine(w.ExtractPath, cleanPath);
+                        if (File.Exists(combined))
+                            return combined;
+                    }
+                }
+            }
+
+            // 4. Last resort: strip res:// and try as raw filesystem path
+            string stripped = StripResPrefix(path);
+            if (stripped != path && File.Exists(stripped))
+                return stripped;
+
             return resolved;
+        }
+
+        private static string StripResPrefix(string p)
+        {
+            if (p.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+                return p.Substring(6).TrimStart('/');
+            return p;
         }
 	}
 }

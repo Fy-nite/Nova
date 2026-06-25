@@ -1,5 +1,6 @@
 [gd_scene format=3 uid="uid://c67xlhgmqbjit"]
 
+[ext_resource type="Script" uid="uid://oij804jnb2j7" path="res://addons/worldml_exporter/Nodes/V12Collision.cs" id="2_6d52x"]
 [ext_resource type="Material" uid="uid://by5encxbbc8ur" path="res://prototype_textures/materials/blue_material.tres" id="4_l4x4o"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_bxatn"]
@@ -28,13 +29,12 @@ adjustment_contrast = 1.05
 adjustment_saturation = 1.1
 
 [node name="Prototype" type="Node3D" unique_id=1831033359]
-metadata/_edit_group_ = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1748113669]
 environment = SubResource("Environment_ljefa")
 
 [node name="CSGRoot" type="CSGCombiner3D" parent="." unique_id=503339379]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, -3.9999998)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, -11.4)
 use_collision = true
 
 [node name="BackWall" type="CSGBox3D" parent="CSGRoot" unique_id=11671312]
@@ -75,6 +75,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.90000004, -1.6)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -4.05)
 size = Vector3(24, 0.5, 23.7)
 material = ExtResource("4_l4x4o")
+
+[node name="V12Collision" type="Node3D" parent="CSGBox3D" unique_id=1202587909]
+script = ExtResource("2_6d52x")
+Width = 23.975
+Height = 0.49
+Depth = 23.695
+metadata/_custom_type_script = "uid://oij804jnb2j7"
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1395289630]
 transform = Transform3D(0.70710665, 0.5000002, -0.5, 0, 0.70710665, 0.7071069, 0.7071069, -0.5, 0.4999998, -5.85, 8.27315, 5.8499975)

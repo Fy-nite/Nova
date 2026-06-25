@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Directional (sun) light with configurable color, energy, and shadow casting.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/sun.svg")]
 public partial class V12DirectionalLight : Node, IV12ComponentNode
 {

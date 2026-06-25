@@ -11,6 +11,19 @@ public static class WorldMLExporter
         "CharacterBody3D", "Area3D", "CollisionShape3D", "CollisionPolygon3D"
     };
 
+    // Children with these names are editor-only gizmos and must be excluded from export.
+    private static readonly HashSet<string> SkipNodeNames = new()
+    {
+        "_V12Gizmo"
+    };
+
+    // V12 node types that should be exported as standalone <Element> (with TransformComponent)
+    // rather than inlined as child component XML. These represent world-positioned objects.
+    private static readonly HashSet<string> StandaloneV12Types = new()
+    {
+        "V12Player", "V12SpawnPoint"
+    };
+
     public static string ExportWorld(Node root, string worldName = null)
     {
         var s = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
@@ -57,7 +70,8 @@ public static class WorldMLExporter
 
             foreach (Node c in node.GetChildren())
             {
-                if (IsComponentNode(c) && c is not Node3D)
+                if (SkipNodeNames.Contains(c.Name.ToString())) continue;
+                if (IsComponentNode(c) && !StandaloneV12Types.Contains(c.GetClass()))
                     out_ += GetComponentXml(c, ind);
             }
 
@@ -83,9 +97,10 @@ public static class WorldMLExporter
 
             foreach (Node c in node.GetChildren())
             {
+                if (SkipNodeNames.Contains(c.Name.ToString())) continue;
                 var ccls = c.GetClass();
                 if (SkipClasses.Contains(ccls)) continue;
-                if (IsComponentNode(c) && c is not Node3D) continue;
+                if (IsComponentNode(c) && !StandaloneV12Types.Contains(c.GetClass())) continue;
                 out_ += AppendElementForNode(c, indent + 1, worldName);
             }
 

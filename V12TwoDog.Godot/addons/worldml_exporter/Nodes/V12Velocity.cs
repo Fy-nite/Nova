@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Applies linear and angular velocity to an element, useful for moving platforms or spinning objects.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/wind.svg")]
 public partial class V12Velocity : Node, IV12ComponentNode
 {

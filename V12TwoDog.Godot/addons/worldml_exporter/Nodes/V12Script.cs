@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Attaches a Lua script to an element. Provide a file path or inline script text.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/script.svg")]
 public partial class V12Script : Node, IV12ComponentNode
 {

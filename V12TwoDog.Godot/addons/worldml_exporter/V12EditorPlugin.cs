@@ -117,7 +117,10 @@ public partial class V12EditorPlugin : EditorPlugin
         if (path.EndsWith(".V12World", System.StringComparison.OrdinalIgnoreCase))
             V12WorldPacker.PackWorld(root, path);
         else
-            System.IO.File.WriteAllText(path, WorldMLExporter.ExportWorld(root));
+        {
+            var worldName = System.IO.Path.GetFileNameWithoutExtension(path);
+            System.IO.File.WriteAllText(path, WorldMLExporter.ExportWorld(root, worldName));
+        }
 
         SetCachedPath(path);
         ShowDialog($"Exported to:\n{path}");

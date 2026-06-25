@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Adds a fog volume to the scene with configurable color, density, height, and falloff.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/fog.svg")]
 public partial class V12Fog : Node, IV12ComponentNode
 {

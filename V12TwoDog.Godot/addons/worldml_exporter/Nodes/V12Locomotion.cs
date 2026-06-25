@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Enables player movement (walk, sprint, jump) with desktop and VR locomotion settings.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/arrows_clockwise.svg")]
 public partial class V12Locomotion : Node, IV12ComponentNode
 {

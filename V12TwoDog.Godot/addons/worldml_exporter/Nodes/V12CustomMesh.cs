@@ -5,7 +5,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Defines a custom mesh from vertex/index data, or extracts it from a parent MeshInstance3D.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/diamond.svg")]
 public partial class V12CustomMesh : Node, IV12ComponentNode
 {

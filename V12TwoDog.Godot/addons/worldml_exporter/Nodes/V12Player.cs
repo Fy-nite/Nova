@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Defines the player spawn point and preferred input method (Desktop/XR/Auto) with movement settings.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/target.svg")]
 public partial class V12Player : Node3D, IV12ComponentNode
 {
@@ -33,12 +35,15 @@ public partial class V12Player : Node3D, IV12ComponentNode
 
     public override void _Ready()
     {
-        if (Engine.IsEditorHint() && !HasNode(GizmoName))
+        if (Engine.IsEditorHint())
             EnsureGizmo();
+        else
+            QueueFree();
     }
 
     private void EnsureGizmo()
     {
+        if (HasNode(GizmoName)) return;
         var gizmo = new MeshInstance3D();
         gizmo.Name = GizmoName;
         gizmo.Mesh = new CapsuleMesh();
@@ -48,7 +53,6 @@ public partial class V12Player : Node3D, IV12ComponentNode
         mat.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
         gizmo.MaterialOverride = mat;
         AddChild(gizmo);
-        gizmo.Owner = GetTree()?.EditedSceneRoot;
     }
 
     public string GetV12ComponentXml(string indent)

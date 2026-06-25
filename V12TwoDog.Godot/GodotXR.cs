@@ -15,9 +15,6 @@ namespace V12TwoDog
 		private XRCamera3D _hmdCamera;
 		private XRController3D _leftController;
 		private XRController3D _rightController;
-		private MeshInstance3D _headsetVis;
-		private MeshInstance3D _leftHandVis;
-		private MeshInstance3D _rightHandVis;
 		private V12.Core.Input.InputService _inputService;
 		private VRInputProvider _vrInputProvider;
 		private OpenXRInterface _xrInterface;
@@ -50,6 +47,9 @@ namespace V12TwoDog
 
 			XRServer.PrimaryInterface = _xrInterface;
 
+			// Load action map so XRController3D nodes receive tracked poses
+			_xrInterface.Set("action_map", "res://openxr_action_map.tres");
+
 			_origin = new XROrigin3D();
 			_origin.Name = "XROrigin3D";
 			parent.AddChild(_origin);
@@ -72,7 +72,6 @@ namespace V12TwoDog
 				GD.Print("[GodotXR] OpenXR initialized successfully!");
 				IsAvailable = true;
 				parent.GetViewport().UseXR = true;
-				CreateVisualizers();
 			}
 			else
 			{
@@ -149,33 +148,6 @@ namespace V12TwoDog
 			OnVector2Changed(side, "primary", val);
 		}
 
-		private void CreateVisualizers()
-		{
-			float boxSize = 0.08f;
-
-			_headsetVis = MakeColoredBox("XR_Headset_Vis", new Vector3(boxSize, boxSize, boxSize * 0.6f), Colors.CornflowerBlue);
-			_origin.AddChild(_headsetVis);
-
-			_leftHandVis = MakeColoredBox("XR_LeftHand_Vis", new Vector3(boxSize, boxSize, boxSize * 1.2f), Colors.LawnGreen);
-			_leftController.AddChild(_leftHandVis);
-
-			_rightHandVis = MakeColoredBox("XR_RightHand_Vis", new Vector3(boxSize, boxSize, boxSize * 1.2f), Colors.OrangeRed);
-			_rightController.AddChild(_rightHandVis);
-		}
-
-		private static MeshInstance3D MakeColoredBox(string name, Vector3 size, Color color)
-		{
-			var mesh = new BoxMesh { Size = size };
-			var mat = new StandardMaterial3D
-			{
-				AlbedoColor = color,
-				Metallic = 0.3f,
-				Roughness = 0.6f
-			};
-			mesh.Material = mat;
-			return new MeshInstance3D { Name = name, Mesh = mesh };
-		}
-
 		public void Update()
 		{
 			if (!IsAvailable) return;
@@ -198,24 +170,31 @@ namespace V12TwoDog
 		private void UpdateHMDPose()
 		{
 			if (_hmdCamera == null) return;
-			var pos = _hmdCamera.Position;
-			var rot = _hmdCamera.Quaternion;
-			_vrInputProvider.SetHeadPose(new Vec3(pos.X, pos.Y, pos.Z), new Quat(rot.X, rot.Y, rot.Z, rot.W));
+			var originPos = _origin.GlobalPosition;
+			var originBasis = _origin.GlobalTransform.Basis;
+			var originQuat = originBasis.GetRotationQuaternion();
 
-			if (_headsetVis != null && GodotObject.IsInstanceValid(_headsetVis))
-			{
-				_headsetVis.Position = pos;
-				_headsetVis.Quaternion = rot;
-			}
+			var gPos = originPos + originBasis * _hmdCamera.Position;
+			var gRot = originQuat * _hmdCamera.Quaternion;
+
+			_vrInputProvider.SetHeadPose(
+				new Vec3(gPos.X, gPos.Y, -gPos.Z),
+				new Quat(gRot.X, gRot.Y, -gRot.Z, gRot.W));
 		}
 
 		private void UpdateControllerPose(XRController3D controller, bool isLeft)
 		{
 			if (controller == null) return;
-			var pos = controller.Position;
-			var rot = controller.Quaternion;
-			var vpos = new Vec3(pos.X, pos.Y, pos.Z);
-			var vrot = new Quat(rot.X, rot.Y, rot.Z, rot.W);
+			var originPos = _origin.GlobalPosition;
+			var originBasis = _origin.GlobalTransform.Basis;
+			var originQuat = originBasis.GetRotationQuaternion();
+
+			var gPos = originPos + originBasis * controller.Position;
+			var gRot = originQuat * controller.Quaternion;
+
+			var vpos = new Vec3(gPos.X, gPos.Y, -gPos.Z);
+			var vrot = new Quat(gRot.X, gRot.Y, -gRot.Z, gRot.W);
+
 			if (isLeft)
 				_vrInputProvider.SetLeftHandPose(vpos, vrot);
 			else

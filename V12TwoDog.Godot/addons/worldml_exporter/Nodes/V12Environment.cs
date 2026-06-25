@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Configures the world environment: sky color, ambient lighting, and optional skybox.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/globe.svg")]
 public partial class V12Environment : Node, IV12ComponentNode
 {

@@ -2,20 +2,20 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Designates a spawn location where the player (or XR rig) will be placed when the world loads.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/location.svg")]
 public partial class V12SpawnPoint : Node3D, IV12ComponentNode
 {
     private const string GizmoName = "_V12Gizmo";
-    private bool _gizmoReady;
 
     public override void _Ready()
     {
-        if (Engine.IsEditorHint() && !_gizmoReady)
-        {
-            _gizmoReady = true;
+        if (Engine.IsEditorHint())
             EnsureGizmo();
-        }
+        else
+            QueueFree();
     }
 
     private void EnsureGizmo()
@@ -32,7 +32,6 @@ public partial class V12SpawnPoint : Node3D, IV12ComponentNode
         mat.AlbedoColor = new Color(0, 1, 0, 0.5f);
         gizmo.MaterialOverride = mat;
         AddChild(gizmo);
-        gizmo.Owner = GetTree()?.EditedSceneRoot;
     }
 
     public string GetV12ComponentXml(string indent)

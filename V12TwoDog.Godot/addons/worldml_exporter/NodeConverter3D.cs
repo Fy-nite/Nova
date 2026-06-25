@@ -379,6 +379,14 @@ public static class NodeConverter3D
         if (emissionTexPath != null)
             out_ += $" EmissionTexture=\"{emissionTexPath}\"";
 
+        // UV1 offset & scale
+        var uvOffset = sm.Uv1Offset;
+        var uvScale = sm.Uv1Scale;
+        if (uvOffset.X != 0f || uvOffset.Y != 0f)
+            out_ += $" Uv1OffsetX=\"{uvOffset.X:F3}\" Uv1OffsetY=\"{uvOffset.Y:F3}\"";
+        if (uvScale.X != 1f || uvScale.Y != 1f)
+            out_ += $" Uv1ScaleX=\"{uvScale.X:F3}\" Uv1ScaleY=\"{uvScale.Y:F3}\"";
+
         var ec = sm.Emission;
         if (ec.R > 0f || ec.G > 0f || ec.B > 0f)
             out_ += $" EmissionR=\"{ec.R:F3}\" EmissionG=\"{ec.G:F3}\" EmissionB=\"{ec.B:F3}\"";

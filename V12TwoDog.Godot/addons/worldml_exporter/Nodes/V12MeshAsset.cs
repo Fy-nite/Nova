@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>References an external GLTF/GLB/OBJ mesh file and applies local transform offsets.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/box.svg")]
 public partial class V12MeshAsset : Node, IV12ComponentNode
 {

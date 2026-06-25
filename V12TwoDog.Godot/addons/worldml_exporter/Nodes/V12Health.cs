@@ -2,7 +2,9 @@ using Godot;
 
 namespace V12TwoDog.Editor.Nodes;
 
+/// <summary>Gives an element a health pool with optional invincibility. Used for damageable objects.</summary>
 [Tool]
+[GlobalClass]
 [Icon("res://addons/at-icons/node3d/heart.svg")]
 public partial class V12Health : Node, IV12ComponentNode
 {

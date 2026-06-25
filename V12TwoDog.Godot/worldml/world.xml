@@ -43,7 +43,7 @@
 		<TransformComponent x="-4.000" y="-0.250" z="-4.050" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
 		<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="24.000" Height="0.500" Depth="23.700" />
 		<Component type="MeshRenderer" Mesh="csg_mesh" />
-		<MaterialComponent R="0.458" G="0.458" B="0.458" A="1.000" Metallic="0.000" Roughness="1.000" AlbedoTexture="prototype_textures/textures/blue_texture.png" />
+		<MaterialComponent R="0.458" G="0.458" B="0.458" A="1.000" Metallic="0.000" Roughness="1.000" AlbedoTexture="v12://world/prototype_textures/textures/blue_texture.png" />
 	</Element>
 	<Element name="DirectionalLight3D">
 		<TransformComponent x="-5.850" y="8.273" z="5.850" rotation="-45.000" rotationX="-0.785" rotationY="-0.785" rotationZ="0.000" />
