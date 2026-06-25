@@ -32,6 +32,11 @@ public partial class RootLoop : Node3D
 	bool _mouseCaptured;
 	GodotXR _xr;
     GodotPhysicsBackend _godotPhysics;
+    private V12.Core.Systems.PickupSystem _pickup;
+
+    // ── Laser visual ──
+    private MeshInstance3D _laserLine;
+    private MeshInstance3D _laserHit;
 
     // ── Threading ──
     private Thread _v12Thread;
@@ -105,6 +110,33 @@ public partial class RootLoop : Node3D
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
+
+        // ── Pickup system (registered in BasicRegistry, init here) ──
+        _pickup = root.Registry.Get<V12.Core.Systems.PickupSystem>();
+        _pickup?.Initialize(root);
+
+        // ── Laser visual ──
+        _laserLine = new MeshInstance3D();
+        _laserLine.Name = "LaserLine";
+        _laserLine.Mesh = new ImmediateMesh();
+        var laserMat = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0, 1, 0, 0.6f),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha
+        };
+        _laserLine.MaterialOverride = laserMat;
+        AddChild(_laserLine);
+
+        _laserHit = new MeshInstance3D();
+        _laserHit.Name = "LaserHit";
+        var hitMat = new StandardMaterial3D
+        {
+            AlbedoColor = new Color(0, 1, 0),
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded
+        };
+        _laserHit.MaterialOverride = hitMat;
+        AddChild(_laserHit);
 
         if (_xr?.IsAvailable != true)
             CallDeferred(nameof(SetMouseCaptured), true);
@@ -261,6 +293,8 @@ public partial class RootLoop : Node3D
 			}
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
+			if (Input.IsActionJustReleased("interact"))
+				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonUp, Name = "interact", Value = 0 });
 
 			// ── Fly mode events ──
 			if (Input.IsActionJustPressed("fly_toggle"))
@@ -312,6 +346,9 @@ public partial class RootLoop : Node3D
         // ── Read physics results back after Godot's physics tick ──
         _godotPhysics?.ReadbackAll();
 
+        // ── Update laser visual ──
+        UpdateLaser();
+
         // ── Consume latest frame snapshot on main thread ──
         while (_frameQueue.TryDequeue(out var frame))
             _latestFrame = frame;
@@ -323,6 +360,41 @@ public partial class RootLoop : Node3D
         }
 
         debug.Update((float)delta);
+    }
+
+    private void UpdateLaser()
+    {
+        if (_pickup == null || !_pickup.HasRay) return;
+
+        var origin = new Vector3(_pickup.RayOrigin.X, _pickup.RayOrigin.Y, _pickup.RayOrigin.Z);
+        var hit = new Vector3(_pickup.RayHitPoint.X, _pickup.RayHitPoint.Y, _pickup.RayHitPoint.Z);
+
+        // ── Laser line ──
+        var im = _laserLine.Mesh as ImmediateMesh;
+        if (im != null)
+        {
+            im.ClearSurfaces();
+            im.SurfaceBegin(Mesh.PrimitiveType.Lines);
+            im.SurfaceAddVertex(origin);
+            im.SurfaceAddVertex(hit);
+            im.SurfaceEnd();
+        }
+
+        // ── Hit sphere ──
+        var color = _pickup.RayHitSomething ? Colors.Green : Colors.Red;
+        _laserHit.Visible = _pickup.RayHitSomething;
+        if (_pickup.RayHitSomething)
+        {
+            var sphereMesh = _laserHit.Mesh as SphereMesh;
+            if (sphereMesh == null)
+            {
+                sphereMesh = new SphereMesh { Radius = 0.08f, Height = 0.16f };
+                _laserHit.Mesh = sphereMesh;
+            }
+            _laserHit.Position = hit;
+            var mat = _laserHit.MaterialOverride as StandardMaterial3D;
+            if (mat != null) mat.AlbedoColor = color;
+        }
     }
 
     public override void _Notification(int what)

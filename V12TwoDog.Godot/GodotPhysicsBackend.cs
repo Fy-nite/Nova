@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Godot;
 using V12.Core.Interfaces.Physics;
 using V12.Components;
@@ -13,6 +14,7 @@ namespace V12TwoDog
         private readonly PhysicsServer3DInstance _server;
         private readonly Rid _space;
         private readonly Dictionary<long, GodotPhysicsBody> _bodies = new();
+        private readonly Dictionary<Rid, long> _ridToBody = new();
         private long _nextId;
 
         public GodotPhysicsBackend(World3D world3d)
@@ -56,6 +58,8 @@ namespace V12TwoDog
                 body.BodyRid = bodyRid;
                 body.ShapeRid = shapeRid;
                 body._syncPending = false;
+
+                lock (_ridToBody) { _ridToBody[bodyRid] = id; }
             });
 
             _bodies[id] = body;
@@ -69,6 +73,8 @@ namespace V12TwoDog
                 _bodies.Remove(gb.Id);
                 GodotMainThread.Execute(() =>
                 {
+                    if (gb.BodyRid.IsValid)
+                        lock (_ridToBody) { _ridToBody.Remove(gb.BodyRid); }
                     if (gb.ShapeRid.IsValid)
                         _server.FreeRid(gb.ShapeRid);
                     if (gb.BodyRid.IsValid)
@@ -80,35 +86,72 @@ namespace V12TwoDog
         public bool Raycast(in Ray ray, out RaycastHit hit)
         {
             hit = default;
-            var state = _server.SpaceGetDirectState(_space);
-            if (state == null)
-                return false;
+            var rayCopy = ray;
+            bool result = false;
+            NumVec3 hitPos = default, hitNorm = default;
+            Rid hitBodyRid = default;
+            var evt = new ManualResetEventSlim(false);
 
-            var from = new Vector3(ray.Origin.X, ray.Origin.Y, ray.Origin.Z);
-            var to = new Vector3(
-                ray.Origin.X + ray.Direction.X * ray.MaxDistance,
-                ray.Origin.Y + ray.Direction.Y * ray.MaxDistance,
-                ray.Origin.Z + ray.Direction.Z * ray.MaxDistance);
-
-            var query = new PhysicsRayQueryParameters3D
+            GodotMainThread.Execute(() =>
             {
-                From = from,
-                To = to,
-                CollideWithBodies = true,
-                CollideWithAreas = false
-            };
+                var state = _server.SpaceGetDirectState(_space);
+                if (state == null)
+                {
+                    evt.Set();
+                    return;
+                }
 
-            var result = state.IntersectRay(query);
-            if (result.Count == 0)
+                var from = new Vector3(rayCopy.Origin.X, rayCopy.Origin.Y, rayCopy.Origin.Z);
+                var to = new Vector3(
+                    rayCopy.Origin.X + rayCopy.Direction.X * rayCopy.MaxDistance,
+                    rayCopy.Origin.Y + rayCopy.Direction.Y * rayCopy.MaxDistance,
+                    rayCopy.Origin.Z + rayCopy.Direction.Z * rayCopy.MaxDistance);
+
+                var query = new PhysicsRayQueryParameters3D
+                {
+                    From = from,
+                    To = to,
+                    CollideWithBodies = true,
+                    CollideWithAreas = false
+                };
+
+                var godotResult = state.IntersectRay(query);
+                if (godotResult.Count == 0)
+                {
+                    evt.Set();
+                    return;
+                }
+
+                var pos = (Vector3)godotResult["position"];
+                var norm = (Vector3)godotResult["normal"];
+                hitPos = new NumVec3(pos.X, pos.Y, pos.Z);
+                hitNorm = new NumVec3(norm.X, norm.Y, norm.Z);
+                hitBodyRid = (Rid)godotResult["rid"];
+                result = true;
+                evt.Set();
+            });
+
+            // Block worker thread until main thread processes the raycast
+            evt.Wait();
+            evt.Dispose();
+
+            if (!result)
                 return false;
 
-            var pos = (Vector3)result["position"];
-            var norm = (Vector3)result["normal"];
+            IPhysicsBody hitBody = default;
+            lock (_ridToBody)
+            {
+                if (hitBodyRid.IsValid && _ridToBody.TryGetValue(hitBodyRid, out long bodyId) && _bodies.TryGetValue(bodyId, out var body))
+                    hitBody = body;
+            }
+
+            var fromVec = new Vector3(ray.Origin.X, ray.Origin.Y, ray.Origin.Z);
             hit = new RaycastHit
             {
-                Point = new NumVec3(pos.X, pos.Y, pos.Z),
-                Normal = new NumVec3(norm.X, norm.Y, norm.Z),
-                Distance = (pos - from).Length()
+                Point = hitPos,
+                Normal = hitNorm,
+                Distance = (new Vector3(hitPos.X, hitPos.Y, hitPos.Z) - fromVec).Length(),
+                Body = hitBody
             };
             return true;
         }
@@ -160,13 +203,15 @@ namespace V12TwoDog
                     });
                     break;
                 case MeshShape.Plane:
+                    // BoxShape3D stores half-extents
                     rid = _server.BoxShapeCreate();
-                    _server.ShapeSetData(rid, new Vector3(size.X, 0.1f, size.Z));
+                    _server.ShapeSetData(rid, new Vector3(size.X * 0.5f, 0.05f, size.Z * 0.5f));
                     break;
                 case MeshShape.Box:
                 default:
+                    // BoxShape3D stores half-extents, so divide by 2
                     rid = _server.BoxShapeCreate();
-                    _server.ShapeSetData(rid, new Vector3(size.X, size.Y, size.Z));
+                    _server.ShapeSetData(rid, new Vector3(size.X * 0.5f, size.Y * 0.5f, size.Z * 0.5f));
                     break;
             }
             return rid;
@@ -237,6 +282,18 @@ namespace V12TwoDog
             });
         }
 
+        public void SetKinematic(bool kinematic)
+        {
+            IsDynamic = !kinematic;
+            GodotMainThread.Execute(() =>
+            {
+                if (!BodyRid.IsValid) return;
+                var mode = kinematic ? PhysicsServer3D.BodyMode.Static : PhysicsServer3D.BodyMode.Rigid;
+                _server.BodySetMode(BodyRid, mode);
+            });
+            EnqueueSync();
+        }
+
         private void EnqueueSync()
         {
             if (_syncPending) return;
@@ -265,6 +322,14 @@ namespace V12TwoDog
                 return;
 
             var vel = new Vector3(_cachedVelocity.X, _cachedVelocity.Y, _cachedVelocity.Z);
+
+            if (IsDynamic)
+            {
+                // Preserve Godot's Y velocity so gravity accumulates naturally
+                var currentVel = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
+                vel.Y = currentVel.Y;
+            }
+
             _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity, vel);
 
             if (!IsDynamic)
