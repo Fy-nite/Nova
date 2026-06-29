@@ -35,6 +35,12 @@ namespace V12TwoDog
         {
             if (_gameRoot?.SelectedWorld == null) return;
 
+            // Wait until Godot has a current camera before creating portal nodes.
+            // The V12 Renderer creates the Camera3D in ApplySnapshot; on the very first
+            // frame the snapshot may not be available yet and Portal3D._ready() will assert.
+            if (GetViewport()?.GetCamera3D() == null)
+                return;
+
             var world = _gameRoot.SelectedWorld;
 
             world.Lock.EnterReadLock();
@@ -224,8 +230,19 @@ namespace V12TwoDog
             var curPos = playerElement.LocalTransform.Position;
             var curGodot = new Vector3(curPos.X, curPos.Y, curPos.Z);
 
+            // Decrement cooldowns
+            var cdKeys = new List<long>(_teleportCooldown.Keys);
+            foreach (var k in cdKeys)
+            {
+                if (--_teleportCooldown[k] <= 0)
+                    _teleportCooldown.Remove(k);
+            }
+
             foreach (var kvp in _portalNodes)
             {
+                if (_teleportCooldown.TryGetValue(kvp.Key, out var cd) && cd > 0)
+                    continue;
+
                 if (!_linkedPairs.TryGetValue(kvp.Key, out var exitId)) continue;
                 if (!_portalNodes.TryGetValue(exitId, out var exitNode)) continue;
 
@@ -254,8 +271,12 @@ namespace V12TwoDog
                 var playerTransform = new Transform3D(Basis.Identity, curGodot);
                 var exitTransform = (Transform3D)portal3D.Call("to_exit_transform", playerTransform);
 
+                var exitPortal3D = exitNode;
+                var forwardOffset = -exitPortal3D.GlobalBasis.Z * 1.2f;
+                var teleportOrigin = exitTransform.Origin + forwardOffset;
+
                 var newPos = new NumVec3(
-                    exitTransform.Origin.X, exitTransform.Origin.Y, exitTransform.Origin.Z);
+                    teleportOrigin.X, teleportOrigin.Y, teleportOrigin.Z);
 
                 // Update V12 element position
                 playerElement.LocalTransform = new TRS
@@ -275,14 +296,26 @@ namespace V12TwoDog
                 {
                     var playerNode = _playerArea.GetParent<Node3D>();
                     if (playerNode != null)
-                        playerNode.GlobalPosition = exitTransform.Origin;
+                        playerNode.GlobalPosition = teleportOrigin;
                 }
+
+                // Zero velocity on the Godot CharacterBody3D to prevent sliding
+                var godotPlayer = _playerArea?.GetParent<Node3D>();
+                if (godotPlayer is CharacterBody3D charBody)
+                    charBody.Velocity = Vector3.Zero;
+
+                // Apply cooldown to both source and exit portals so the check
+                // doesn't re-trigger before the V12 worker thread has a chance to
+                // converge with the new position (~0.5s at 60 fps).
+                _teleportCooldown[kvp.Key] = 30;
+                _teleportCooldown[exitId] = 30;
 
                 GD.Print($"[PortalBinding] Teleported player to ({newPos.X:F2}, {newPos.Y:F2}, {newPos.Z:F2})");
             }
         }
 
         private Dictionary<long, float> _prevPortalDist = new();
+        private readonly Dictionary<long, int> _teleportCooldown = new();
 
         private static IWorldElement FindPlayer(World world)
         {
@@ -332,6 +365,7 @@ namespace V12TwoDog
             _portalNodes.Clear();
             _linkedPairs.Clear();
             _prevPortalDist.Clear();
+            _teleportCooldown.Clear();
             _playerArea = null;
         }
     }
