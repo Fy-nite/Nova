@@ -33,6 +33,7 @@ public partial class RootLoop : Node3D
 	XRTrackingService _xr;
     GodotPhysicsBackend _godotPhysics;
     private V12.Core.Systems.PickupSystem _pickup;
+    private PortalBinding _portalBinding;
 
     // ── Laser visual ──
     private MeshInstance3D _laserLine;
@@ -114,6 +115,11 @@ public partial class RootLoop : Node3D
         // ── Pickup system (registered in BasicRegistry, init here) ──
         _pickup = root.Registry.Get<V12.Core.Systems.PickupSystem>();
         _pickup?.Initialize(root);
+
+        // ── Portal binding ──
+        _portalBinding = new PortalBinding();
+        _portalBinding.Initialize(root);
+        AddChild(_portalBinding);
 
         // ── Laser visual ──
         _laserLine = new MeshInstance3D();
@@ -342,6 +348,7 @@ public partial class RootLoop : Node3D
             audioPlayer.ApplySnapshot(_latestFrame);
         }
 
+        _portalBinding?.Update();
         debug.Update((float)delta);
     }
 
@@ -384,6 +391,7 @@ public partial class RootLoop : Node3D
     {
         if (what == NotificationPredelete)
         {
+            _portalBinding?.Cleanup();
             _xr?.Cleanup();
             _cts?.Cancel();
             _v12Thread?.Join(1000);

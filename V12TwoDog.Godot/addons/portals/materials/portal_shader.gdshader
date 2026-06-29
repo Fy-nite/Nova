@@ -4,13 +4,15 @@ render_mode unshaded;
 uniform sampler2D albedo: hint_default_black, source_color;
 
 void fragment() {
-    // The portal color is simply the screen-space color of the exit camera render target.
-    // This is because the exit camera views the exit portal from the perspective of the player watching
-    // the entrance portal, meaning the exit portal will occupy the same screen-space as the entrance portal.
+#if 0
+    // Desktop: screen-space mapping (correct for non-stereo rendering)
     vec3 portal_color = texture(albedo, SCREEN_UV).rgb;
+#else
+    // VR / fallback: use mesh UVs so both eyes sample the same texture position.
+    // The SubViewport renders a single monoscopic view; using SCREEN_UV in stereo
+    // gives each eye a different slice of the texture, causing a swapped-eyes look.
+    vec3 portal_color = texture(albedo, UV).rgb;
+#endif
 
 	ALBEDO = portal_color;
-
-	// FOR DEBUG - make portals slightly red
-	// ALBEDO = mix(portal_color, vec3(1, 0, 0), 0.1);
 }
