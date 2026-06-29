@@ -175,8 +175,12 @@ namespace V12TwoDog
             var lt = target.LocalTransform;
             lt.Position = new System.Numerics.Vector3(srcPos.X, srcPos.Y, srcPos.Z);
 
-            var q = source.Transform.Basis.GetRotationQuaternion();
-            lt.Rotation = new System.Numerics.Quaternion(q.X, q.Y, q.Z, q.W);
+            var basis = source.Transform.Basis;
+            if (basis.Row0 != Vector3.Zero || basis.Row1 != Vector3.Zero || basis.Row2 != Vector3.Zero)
+            {
+                var q = basis.GetRotationQuaternion();
+                lt.Rotation = new System.Numerics.Quaternion(q.X, q.Y, q.Z, q.W);
+            }
             target.LocalTransform = lt;
         }
 

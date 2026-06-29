@@ -91,7 +91,15 @@ namespace V12TwoDog
 							parentRs.Name = ancestor.Name ?? "";
 							parentRs.NodeType = SnapshotNodeType.RawElement;
 							var tc = ancestor.GetComponent<TransformComponent>();
-							parentRs.Transform = tc?.Transform ?? System.Numerics.Matrix4x4.Identity;
+							if (tc != null)
+								parentRs.Transform = tc.Transform;
+							else
+							{
+								var alt = ancestor.LocalTransform;
+								parentRs.Transform = System.Numerics.Matrix4x4.CreateScale(alt.Scale)
+									* System.Numerics.Matrix4x4.CreateFromQuaternion(alt.Rotation)
+									* System.Numerics.Matrix4x4.CreateTranslation(alt.Position);
+							}
 							parentRs.LocalTransform = parentRs.Transform;
 							parentRs.HasLocalTransform = true;
 							snapshot.Renderables.Add(parentRs);
@@ -102,7 +110,17 @@ namespace V12TwoDog
 
 					// Use local transform (hierarchy accumulates through scene tree)
 					var localTc = owner.GetComponent<TransformComponent>();
-					rs.Transform = localTc?.Transform ?? System.Numerics.Matrix4x4.Identity;
+					if (localTc != null)
+					{
+						rs.Transform = localTc.Transform;
+					}
+					else
+					{
+						var lt = owner.LocalTransform;
+						rs.Transform = System.Numerics.Matrix4x4.CreateScale(lt.Scale)
+							* System.Numerics.Matrix4x4.CreateFromQuaternion(lt.Rotation)
+							* System.Numerics.Matrix4x4.CreateTranslation(lt.Position);
+					}
 					rs.LocalTransform = rs.Transform;
 					rs.HasLocalTransform = true;
 					rs.IsWorldLocked = false;

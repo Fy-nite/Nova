@@ -359,8 +359,12 @@ namespace V12TwoDog
 
             var resultXform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
             _cachedPosition = new NumVec3(resultXform.Origin.X, resultXform.Origin.Y, resultXform.Origin.Z);
-            var q = resultXform.Basis.GetRotationQuaternion();
-            _cachedRotation = new NumQuat(q.X, q.Y, q.Z, q.W);
+            var basis = resultXform.Basis;
+            if (basis.Row0 != Vector3.Zero || basis.Row1 != Vector3.Zero || basis.Row2 != Vector3.Zero)
+            {
+                var q = basis.GetRotationQuaternion();
+                _cachedRotation = new NumQuat(q.X, q.Y, q.Z, q.W);
+            }
             var vel = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
             _cachedVelocity = new NumVec3(vel.X, vel.Y, vel.Z);
         }

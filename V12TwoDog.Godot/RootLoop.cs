@@ -141,16 +141,6 @@ public partial class RootLoop : Node3D
         if (_xr?.IsAvailable != true)
             CallDeferred(nameof(SetMouseCaptured), true);
 
-        // ── Add follow-player sun for XR (arena's static light doesn't move) ──
-        if (_xr?.IsAvailable == true)
-        {
-            var sun = new DirectionalLight3D();
-            sun.Name = "FollowSun";
-            sun.Rotation = new Vector3(Mathf.DegToRad(-45), Mathf.DegToRad(30), 0);
-            sun.ShadowEnabled = true;
-            _xr.Origin.AddChild(sun);
-        }
-
         // ── Start V12 worker thread ──
         _cts = new CancellationTokenSource();
         _v12Thread = new Thread(() => V12WorkerLoop(_cts.Token))

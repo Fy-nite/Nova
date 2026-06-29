@@ -149,6 +149,11 @@ fly_toggle={
 
 sensors/enable_gyroscope=true
 
+[physics]
+
+common/physics_ticks_per_second=240
+common/physics_interpolation=true
+
 [rendering]
 
 textures/vram_compression/import_etc2_astc=true
