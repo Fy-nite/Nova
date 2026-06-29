@@ -101,6 +101,7 @@ public static class WorldMLExporter
                 var ccls = c.GetClass();
                 if (SkipClasses.Contains(ccls)) continue;
                 if (IsComponentNode(c) && !StandaloneV12Types.Contains(c.GetClass())) continue;
+                if (cls == "CSGCombiner3D" && ccls.StartsWith("CSG")) continue;
                 out_ += AppendElementForNode(c, indent + 1, worldName);
             }
 

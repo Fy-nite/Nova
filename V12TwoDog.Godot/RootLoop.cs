@@ -30,7 +30,7 @@ public partial class RootLoop : Node3D
 	Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
 	bool _mouseCaptured;
-	GodotXR _xr;
+	XRTrackingService _xr;
     GodotPhysicsBackend _godotPhysics;
     private V12.Core.Systems.PickupSystem _pickup;
 
@@ -83,12 +83,12 @@ public partial class RootLoop : Node3D
         debug.Initialize(root);
         root.Registry.Register("DebugGameService", debug );
 
-		// ── Initialize XR before bootstrap so it can check availability ──
+		// ── Initialize XR tracking before bootstrap so it can check availability ──
 		var xrInput = root.Registry.Get<V12.Core.Input.InputService>();
-        _xr = new GodotXR(this, xrInput);
+        _xr = new XRTrackingService(this, xrInput);
         if (_xr.IsAvailable)
         {
-            root.Registry.Register("IVRInputProvider", _xr.PoseProvider);
+            root.Registry.Register("XRTrackingService", _xr);
             GD.Print("[RootLoop] XR support active.");
         }
         else
@@ -141,10 +141,15 @@ public partial class RootLoop : Node3D
         if (_xr?.IsAvailable != true)
             CallDeferred(nameof(SetMouseCaptured), true);
 
-        // ── Add scene lighting ──
-        var sun = new DirectionalLight3D();
-        sun.Rotation = new Vector3(Mathf.DegToRad(-45), Mathf.DegToRad(30), 0);
-        AddChild(sun);
+        // ── Add follow-player sun for XR (arena's static light doesn't move) ──
+        if (_xr?.IsAvailable == true)
+        {
+            var sun = new DirectionalLight3D();
+            sun.Name = "FollowSun";
+            sun.Rotation = new Vector3(Mathf.DegToRad(-45), Mathf.DegToRad(30), 0);
+            sun.ShadowEnabled = true;
+            _xr.Origin.AddChild(sun);
+        }
 
         // ── Start V12 worker thread ──
         _cts = new CancellationTokenSource();
@@ -186,18 +191,6 @@ public partial class RootLoop : Node3D
 	{
         // ── Update XR tracking and input ──
         _xr?.Update();
-
-        // ── Sync V12 Player position + body rotation to XROrigin3D ──
-        if (_xr?.IsAvailable == true && _xr.Origin != null)
-        {
-            var xrInput = root.Registry.Get<IVRInputProvider>();
-            if (xrInput != null)
-            {
-                var wp = xrInput.WorldPosition;
-                _xr.Origin.Position = new Vector3(wp.X, wp.Y, wp.Z);
-                _xr.Origin.Quaternion = new Godot.Quaternion(Vector3.Up, xrInput.BodyYaw);
-            }
-        }
 
         var inputService = root.Registry.Get<V12.Core.Input.InputService>();
 		if (inputService != null)

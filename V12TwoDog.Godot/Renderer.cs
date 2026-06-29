@@ -46,20 +46,78 @@ namespace V12TwoDog
 
 		public void step()
 		{
-			// Legacy path - kept for backwards compat, delegates to ApplySnapshot
 			var snapshot = new FrameSnapshot();
 			snapshot.Renderables.Capacity = _renderables.Count;
+			var parentChainIds = new HashSet<long>();
+
 			foreach (var r in _renderables)
 			{
 				var rs = new RenderableSnapshot();
 				rs.ElementId = r.Id;
 				rs.Name = r.Name ?? "";
 				rs.ParentId = 0;
+
 				if (r is ComponentBase cb && cb.Owner != null)
-					rs.Transform = cb.Owner.WorldTransform;
+				{
+					var owner = cb.Owner;
+
+					// Set ParentId from element parent
+					if (owner.Parent != null)
+						rs.ParentId = owner.Parent.Id;
+
+					// Walk up the parent chain and add entries for any non-renderable ancestors
+					var ancestor = owner.Parent;
+					while (ancestor != null)
+					{
+						if (!parentChainIds.Add(ancestor.Id)) break;
+
+						// Only add as placeholder if this ancestor has no IRenderable
+						// (all renderable components produce their own entries in _renderables)
+						bool hasRenderable = false;
+						foreach (var comp in ancestor.Components)
+						{
+							if (comp is IRenderable)
+							{
+								hasRenderable = true;
+								break;
+							}
+						}
+
+						if (!hasRenderable)
+						{
+							var parentRs = new RenderableSnapshot();
+							parentRs.ElementId = ancestor.Id;
+							parentRs.ParentId = ancestor.Parent?.Id ?? 0;
+							parentRs.Name = ancestor.Name ?? "";
+							parentRs.NodeType = SnapshotNodeType.RawElement;
+							var tc = ancestor.GetComponent<TransformComponent>();
+							parentRs.Transform = tc?.Transform ?? System.Numerics.Matrix4x4.Identity;
+							parentRs.LocalTransform = parentRs.Transform;
+							parentRs.HasLocalTransform = true;
+							snapshot.Renderables.Add(parentRs);
+						}
+
+						ancestor = ancestor.Parent;
+					}
+
+					// Use local transform (hierarchy accumulates through scene tree)
+					var localTc = owner.GetComponent<TransformComponent>();
+					rs.Transform = localTc?.Transform ?? System.Numerics.Matrix4x4.Identity;
+					rs.LocalTransform = rs.Transform;
+					rs.HasLocalTransform = true;
+					rs.IsWorldLocked = false;
+				}
+				else if (r is ITransformRenderable tr)
+				{
+					rs.Transform = tr.Transform;
+					rs.LocalTransform = rs.Transform;
+					rs.HasLocalTransform = true;
+					rs.IsWorldLocked = tr.IsWorldLocked;
+				}
 				else
-					rs.Transform = r is ITransformRenderable tr ? tr.Transform : r.WorldTransform;
-				rs.IsWorldLocked = r is ITransformRenderable itr && itr.IsWorldLocked;
+				{
+					rs.Transform = r.WorldTransform;
+				}
 
 				if (r is ILightRenderable light)
 				{
@@ -86,10 +144,13 @@ namespace V12TwoDog
 					{
 						switch (mc.Shape)
 						{
-							case MeshShape.Box:    rs.NodeType = SnapshotNodeType.MeshBox; break;
-							case MeshShape.Sphere: rs.NodeType = SnapshotNodeType.MeshSphere; break;
-							case MeshShape.Custom: rs.NodeType = SnapshotNodeType.MeshCustom; break;
-							default:               rs.NodeType = SnapshotNodeType.MeshBox; break;
+							case MeshShape.Box:      rs.NodeType = SnapshotNodeType.MeshBox; break;
+							case MeshShape.Sphere:   rs.NodeType = SnapshotNodeType.MeshSphere; break;
+							case MeshShape.Capsule:  rs.NodeType = SnapshotNodeType.MeshCapsule; break;
+							case MeshShape.Cylinder: rs.NodeType = SnapshotNodeType.MeshCylinder; break;
+							case MeshShape.Plane:    rs.NodeType = SnapshotNodeType.MeshPlane; break;
+							case MeshShape.Custom:   rs.NodeType = SnapshotNodeType.MeshCustom; break;
+							default:                 rs.NodeType = SnapshotNodeType.MeshBox; break;
 						}
 						rs.MeshWidth = mc.Width;
 						rs.MeshHeight = mc.Height;
@@ -147,15 +208,8 @@ namespace V12TwoDog
 			if (snapshot == null) return;
 
 			var currentIds = new HashSet<long>();
-			var elementNodeMap = new Dictionary<long, Node3D>();
 
-			// Build parent map from existing nodes
-			foreach (var kvp in _nodesByElementId)
-			{
-				elementNodeMap[kvp.Key] = kvp.Value;
-			}
-
-			// Process every renderable in the snapshot
+			// ── Pass 1: Create all nodes (temporarily parented to root) ──
 			foreach (var rs in snapshot.Renderables)
 			{
 				currentIds.Add(rs.ElementId);
@@ -167,35 +221,54 @@ namespace V12TwoDog
 
 					root.CurrentScene.AddChild(node);
 					_nodesByElementId[rs.ElementId] = node;
-					elementNodeMap[rs.ElementId] = node;
 				}
-				else if (node.GetParent() != root.CurrentScene)
+			}
+
+			// ── Pass 2: Set parent-child hierarchy and local transforms ──
+			foreach (var rs in snapshot.Renderables)
+			{
+				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node)) continue;
+
+				// Re-parent to element parent's node (or root)
+				Node targetParent = root.CurrentScene;
+				if (rs.ParentId != 0
+					&& _nodesByElementId.TryGetValue(rs.ParentId, out var parentNode)
+					&& GodotObject.IsInstanceValid(parentNode))
 				{
-					node.Reparent(root.CurrentScene);
+					targetParent = parentNode;
 				}
+
+				if (node.GetParent() != targetParent)
+					node.Reparent(targetParent);
+
+				// Use local transform for hierarchy; fall back to world transform if unset
+				var t = rs.HasLocalTransform ? rs.LocalTransform : rs.Transform;
+				var basis = new Basis(
+					new Vector3(t.M11, t.M12, t.M13),
+					new Vector3(t.M21, t.M22, t.M23),
+					new Vector3(t.M31, t.M32, t.M33)
+				);
+				var origin = new Vector3(t.M41, t.M42, t.M43);
+				node.Transform = new Transform3D(basis, origin);
 
 				// Update properties
 				UpdateNodeProperties(node, rs);
-
-				// System.Numerics.Matrix4x4 uses row-vector convention (v * M),
-				// so rows ARE the basis vectors. Map row-i → Basis column-i.
-				var basis = new Basis(
-					new Vector3(rs.Transform.M11, rs.Transform.M12, rs.Transform.M13),
-					new Vector3(rs.Transform.M21, rs.Transform.M22, rs.Transform.M23),
-					new Vector3(rs.Transform.M31, rs.Transform.M32, rs.Transform.M33)
-				);
-				var origin = new Vector3(rs.Transform.M41, rs.Transform.M42, rs.Transform.M43);
-				node.Transform = new Transform3D(basis, origin);
 			}
 
-			// Remove stale nodes
+			// ── Remove stale nodes ──
 			var toRemove = new List<long>();
 			foreach (var kvp in _nodesByElementId)
 			{
 				if (!currentIds.Contains(kvp.Key))
 				{
 					if (GodotObject.IsInstanceValid(kvp.Value))
+					{
+						// Reparent children to root before removing parent
+						var children = kvp.Value.GetChildren();
+						foreach (Node child in children)
+							child.Reparent(root.CurrentScene);
 						kvp.Value.QueueFree();
+					}
 					toRemove.Add(kvp.Key);
 				}
 			}
@@ -215,6 +288,9 @@ namespace V12TwoDog
 					return new SpotLight3D();
 				case SnapshotNodeType.MeshBox:
 				case SnapshotNodeType.MeshSphere:
+				case SnapshotNodeType.MeshCapsule:
+				case SnapshotNodeType.MeshCylinder:
+				case SnapshotNodeType.MeshPlane:
 				case SnapshotNodeType.MeshCustom:
 				{
 					var item = new MeshInstance3D();
@@ -227,6 +303,22 @@ namespace V12TwoDog
 						case SnapshotNodeType.MeshSphere:
 							item.Mesh = new SphereMesh();
 							((SphereMesh)item.Mesh).Radius = rs.MeshWidth;
+							((SphereMesh)item.Mesh).Height = rs.MeshHeight;
+							break;
+						case SnapshotNodeType.MeshCapsule:
+							item.Mesh = new CapsuleMesh();
+							((CapsuleMesh)item.Mesh).Radius = rs.MeshWidth;
+							((CapsuleMesh)item.Mesh).Height = rs.MeshHeight;
+							break;
+						case SnapshotNodeType.MeshCylinder:
+							item.Mesh = new CylinderMesh();
+							((CylinderMesh)item.Mesh).TopRadius = rs.MeshWidth;
+							((CylinderMesh)item.Mesh).BottomRadius = rs.MeshWidth;
+							((CylinderMesh)item.Mesh).Height = rs.MeshHeight;
+							break;
+						case SnapshotNodeType.MeshPlane:
+							item.Mesh = new PlaneMesh();
+							((PlaneMesh)item.Mesh).Size = new Vector2(rs.MeshWidth, rs.MeshDepth);
 							break;
 						case SnapshotNodeType.MeshCustom:
 						{
@@ -330,6 +422,9 @@ namespace V12TwoDog
 				}
 				case SnapshotNodeType.MeshBox:
 				case SnapshotNodeType.MeshSphere:
+				case SnapshotNodeType.MeshCapsule:
+				case SnapshotNodeType.MeshCylinder:
+				case SnapshotNodeType.MeshPlane:
 				case SnapshotNodeType.MeshCustom:
 				{
 					if (node is MeshInstance3D mi)

@@ -2,5 +2,24 @@
 
 [ext_resource type="Script" uid="uid://b03xd0wmglbdw" path="res://RootLoop.cs" id="1_ig7tw"]
 
-[node name="WorldAbsoluteRoot" type="Node3D" unique_id=1571922600]
+[sub_resource type="Environment" id="Environment_aoeag"]
+background_color = Color(0.59204584, 0.047813408, 0.6441237, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.32544094, 0.3254409, 0.32544076, 1)
+ambient_light_energy = 1.69
+ssao_enabled = true
+sdfgi_enabled = true
+sdfgi_use_occlusion = true
+glow_enabled = true
+adjustment_enabled = true
+adjustment_saturation = 1.46
+
+[node name="Game" type="Node3D" unique_id=1571922600]
+
+[node name="WorldRoot" type="Node3D" parent="." unique_id=119512337]
 script = ExtResource("1_ig7tw")
+
+[node name="GenericStuff" type="Node3D" parent="." unique_id=1132915918]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="GenericStuff" unique_id=1701696754]
+environment = SubResource("Environment_aoeag")

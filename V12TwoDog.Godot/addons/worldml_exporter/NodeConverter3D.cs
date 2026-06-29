@@ -8,10 +8,9 @@ public static class NodeConverter3D
 {
     public static string BuildTransformXml(Node3D node, string ind)
     {
-        var gp = node.GlobalPosition;
-        var rot = node.Rotation;
+        var gp = node.Position;
         var rotDeg = node.RotationDegrees;
-        var s = $"{ind}\t<TransformComponent x=\"{gp.X:F3}\" y=\"{gp.Y:F3}\" z=\"{gp.Z:F3}\" rotation=\"{rotDeg.Y:F3}\" rotationX=\"{rot.X:F3}\" rotationY=\"{rot.Y:F3}\" rotationZ=\"{rot.Z:F3}\" />\n";
+        var s = $"{ind}\t<TransformComponent x=\"{gp.X:F3}\" y=\"{gp.Y:F3}\" z=\"{gp.Z:F3}\" rotation=\"{rotDeg.Y:F3}\" rotationX=\"{rotDeg.X:F3}\" rotationY=\"{rotDeg.Y:F3}\" rotationZ=\"{rotDeg.Z:F3}\" />\n";
 
         var sc = node.Scale;
         if (!(Mathf.IsEqualApprox(sc.X, 1f) && Mathf.IsEqualApprox(sc.Y, 1f) && Mathf.IsEqualApprox(sc.Z, 1f)))
@@ -66,6 +65,10 @@ public static class NodeConverter3D
 		{
 			s += CsgMesh3DComponents(node, ind, worldName);
 		}
+		else if (cls == "CSGCombiner3D" || cls == "CSGTorus3D")
+		{
+			s += BakeCsgNode(node, ind, worldName);
+		}
 
 		if (node is MeshInstance3D mi)
 			s += MeshInstanceComponents(mi, ind, worldName);
@@ -115,7 +118,7 @@ public static class NodeConverter3D
 		if (shapeName != "")
 			out_ += MeshComponents(ind, "csg_mesh", shapeName, w, h, d);
 		else
-			out_ += $"{ind}\t<Component type=\"MeshComponent\" name=\"csg_mesh\" Shape=\"Custom\" />\n{ind}\t<Component type=\"MeshRenderer\" Mesh=\"csg_mesh\" />\n";
+			out_ += BuildCustomMeshXml(mesh, ind, "csg_mesh");
 
 		// Material from CSG node override or mesh surface
 		var matVar = node.Get("material");
@@ -300,7 +303,60 @@ public static class NodeConverter3D
         return $"{ind}\t<RigidBodyComponent mass=\"{mass:F3}\" gravityScale=\"{gravityScale:F3}\" isKinematic=\"{frozen}\" />\n";
     }
 
-    public static string MeshComponents(string ind, string meshName, string shape, double w, double h, double d)
+	private static string BuildCustomMeshXml(Mesh mesh, string ind, string meshName)
+	{
+		var allVerts = new List<Vector3>();
+		var allTris = new List<Vector3I>();
+		var vertOffset = 0;
+
+		for (int surfIdx = 0; surfIdx < mesh.GetSurfaceCount(); surfIdx++)
+		{
+			var arrays = mesh.SurfaceGetArrays(surfIdx);
+			var vertData = arrays[(int)Mesh.ArrayType.Vertex];
+			if (vertData.VariantType != Variant.Type.PackedVector3Array)
+				continue;
+
+			var verts = vertData.AsVector3Array();
+			foreach (var v in verts)
+				allVerts.Add(v);
+
+			var idxData = arrays[(int)Mesh.ArrayType.Index];
+			var indices = idxData.VariantType == Variant.Type.PackedInt32Array
+				? idxData.AsInt32Array()
+				: null;
+
+			if (indices == null || indices.Length == 0)
+			{
+				indices = new int[verts.Length];
+				for (int i = 0; i < verts.Length; i++)
+					indices[i] = i;
+			}
+
+			for (int i = 0; i + 2 < indices.Length; i += 3)
+				allTris.Add(new Vector3I(
+					indices[i] + vertOffset,
+					indices[i + 1] + vertOffset,
+					indices[i + 2] + vertOffset
+				));
+
+			vertOffset += verts.Length;
+		}
+
+		if (allVerts.Count == 0)
+			return "";
+
+		var out_ = $"{ind}\t<Component type=\"MeshComponent\" name=\"{meshName}\" Shape=\"Custom\">\n";
+		foreach (var v in allVerts)
+			out_ += $"{ind}\t\t<vert x=\"{v.X:F6}\" y=\"{v.Y:F6}\" z=\"{v.Z:F6}\" />\n";
+		foreach (var t in allTris)
+			out_ += $"{ind}\t\t<tri a=\"{t.X}\" b=\"{t.Y}\" c=\"{t.Z}\" />\n";
+		out_ += $"{ind}\t</Component>\n";
+		out_ += $"{ind}\t<Component type=\"MeshRenderer\" Mesh=\"{meshName}\" />\n";
+
+		return out_;
+	}
+
+	public static string MeshComponents(string ind, string meshName, string shape, double w, double h, double d)
     {
         return $"{ind}\t<Component type=\"MeshComponent\" name=\"{meshName}\" Shape=\"{shape}\" Width=\"{w:F3}\" Height=\"{h:F3}\" Depth=\"{d:F3}\" />\n{ind}\t<Component type=\"MeshRenderer\" Mesh=\"{meshName}\" />\n";
     }
@@ -343,6 +399,8 @@ public static class NodeConverter3D
         var out_ = "";
         if (shapeName != "")
             out_ += MeshComponents(ind, "mesh_data", shapeName, w, h, d);
+        else
+            out_ += BuildCustomMeshXml(mesh, ind, "mesh_data");
 
         var mat = node.GetSurfaceOverrideMaterial(0);
         if (mat == null && mesh.GetSurfaceCount() > 0)
@@ -407,7 +465,135 @@ public static class NodeConverter3D
         return rel;
     }
 
-    private static string CsgCollider(Node3D node, string ind, string shape, double w, double h, double d)
+	private static string BakeCsgNode(Node3D node, string ind, string worldName = null)
+	{
+		var meshesVar = node.Call("get_meshes");
+		if (meshesVar.VariantType != Variant.Type.Array)
+			return "";
+
+		var meshesArray = meshesVar.AsGodotArray();
+		if (meshesArray.Count == 0)
+			return "";
+
+		var allVerts = new List<Vector3>();
+		var allTris = new List<Vector3I>();
+		var vertOffset = 0;
+
+		foreach (var entry in meshesArray)
+		{
+			if (entry.VariantType != Variant.Type.Array)
+				continue;
+
+			var entryArr = entry.AsGodotArray();
+			if (entryArr.Count < 2)
+				continue;
+
+			var xform = entryArr[0].AsTransform3D();
+			var mesh = entryArr[1].AsGodotObject() as Mesh;
+			if (mesh == null || mesh.GetSurfaceCount() == 0)
+				continue;
+
+			for (int surfIdx = 0; surfIdx < mesh.GetSurfaceCount(); surfIdx++)
+			{
+				var arrays = mesh.SurfaceGetArrays(surfIdx);
+				var vertData = arrays[(int)Mesh.ArrayType.Vertex];
+				if (vertData.VariantType != Variant.Type.PackedVector3Array)
+					continue;
+
+				var verts = vertData.AsVector3Array();
+				foreach (var v in verts)
+					allVerts.Add(xform * v);
+
+				var idxData = arrays[(int)Mesh.ArrayType.Index];
+				var indices = idxData.VariantType == Variant.Type.PackedInt32Array
+					? idxData.AsInt32Array()
+					: null;
+
+				if (indices == null || indices.Length == 0)
+				{
+					indices = new int[verts.Length];
+					for (int i = 0; i < verts.Length; i++)
+						indices[i] = i;
+				}
+
+				for (int i = 0; i + 2 < indices.Length; i += 3)
+					allTris.Add(new Vector3I(
+						indices[i] + vertOffset,
+						indices[i + 1] + vertOffset,
+						indices[i + 2] + vertOffset
+					));
+
+				vertOffset += verts.Length;
+			}
+		}
+
+		if (allVerts.Count == 0)
+			return "";
+
+		var out_ = "";
+		out_ += $"{ind}\t<Component type=\"MeshComponent\" name=\"csg_mesh\" Shape=\"Custom\">\n";
+
+		foreach (var v in allVerts)
+			out_ += $"{ind}\t\t<vert x=\"{v.X:F6}\" y=\"{v.Y:F6}\" z=\"{v.Z:F6}\" />\n";
+
+		foreach (var t in allTris)
+			out_ += $"{ind}\t\t<tri a=\"{t.X}\" b=\"{t.Y}\" c=\"{t.Z}\" />\n";
+
+		out_ += $"{ind}\t</Component>\n";
+		out_ += $"{ind}\t<Component type=\"MeshRenderer\" Mesh=\"csg_mesh\" />\n";
+
+		// Try material from child meshes first, then fall back to node override
+		var collectedMat = false;
+		foreach (var entry in meshesArray)
+		{
+			if (collectedMat) break;
+			if (entry.VariantType != Variant.Type.Array) continue;
+
+			var entryArr = entry.AsGodotArray();
+			if (entryArr.Count < 2) continue;
+
+			var mesh = entryArr[1].AsGodotObject() as Mesh;
+			if (mesh == null) continue;
+
+			for (int surfIdx = 0; surfIdx < mesh.GetSurfaceCount(); surfIdx++)
+			{
+				var surfMat = mesh.SurfaceGetMaterial(surfIdx);
+				if (surfMat is StandardMaterial3D sm)
+				{
+					out_ += BuildMaterialXml(sm, ind, sm.ResourcePath, worldName);
+					collectedMat = true;
+					break;
+				}
+			}
+		}
+
+		if (!collectedMat)
+		{
+			var matVar = node.Get("material");
+			if (matVar.VariantType != Variant.Type.Nil && matVar.Obj is StandardMaterial3D smOverride)
+				out_ += BuildMaterialXml(smOverride, ind, smOverride.ResourcePath, worldName);
+		}
+
+		// Handle collision from the baked CSG node
+		if (node.HasMethod("get_use_collision") && (bool)node.Get("use_collision"))
+		{
+			var isTrig = false;
+			if (node.HasMethod("get_collision_layer"))
+			{
+				var layer = (uint)node.Get("collision_layer");
+				var mask = (uint)node.Get("collision_mask");
+				isTrig = layer == 0 && mask == 0;
+			}
+			Aabb combinedAabb = new Aabb(allVerts[0], Vector3.Zero);
+			foreach (var v in allVerts)
+				combinedAabb = combinedAabb.Expand(v);
+			out_ += $"{ind}\t<ColliderComponent Shape=\"Box\" Width=\"{combinedAabb.Size.X:F3}\" Height=\"{combinedAabb.Size.Y:F3}\" Depth=\"{combinedAabb.Size.Z:F3}\" isTrigger=\"{isTrig}\" />\n";
+		}
+
+		return out_;
+	}
+
+	private static string CsgCollider(Node3D node, string ind, string shape, double w, double h, double d)
     {
         var useCol = false;
         if (node.HasMethod("get_use_collision"))

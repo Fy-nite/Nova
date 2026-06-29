@@ -1,8 +1,51 @@
-<World name="helo">
-	<Element name="meow"></Element>
-	<Element name="meow"></Element>
-	<Element name="meow"></Element>
-	<Element name="meow"></Element>
-	<Element name="meow"></Element>
-	
+<?xml version="1.0" encoding="utf-8"?>
+<World name="Prototype">
+	<Element name="CSGRoot">
+		<TransformComponent x="-4.000" y="0.000" z="-16.652" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+		<ScaleComponent scaleX="2.000" scaleY="2.000" scaleZ="2.000" />
+		<Element name="BackWall">
+			<TransformComponent x="0.054" y="1.000" z="-3.932" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+			<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="6.100" Height="2.000" Depth="0.126" />
+			<Component type="MeshRenderer" Mesh="csg_mesh" />
+		</Element>
+		<Element name="Roof">
+			<TransformComponent x="0.054" y="2.100" z="0.005" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+			<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="6.100" Height="0.200" Depth="8.000" />
+			<Component type="MeshRenderer" Mesh="csg_mesh" />
+		</Element>
+		<Element name="FrontWall">
+			<TransformComponent x="0.004" y="1.000" z="3.943" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+			<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="6.000" Height="2.000" Depth="0.126" />
+			<Component type="MeshRenderer" Mesh="csg_mesh" />
+			<Element name="Door">
+				<TransformComponent x="-0.104" y="-0.200" z="0.015" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+				<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="1.700" Height="1.600" Depth="0.300" />
+				<Component type="MeshRenderer" Mesh="csg_mesh" />
+			</Element>
+		</Element>
+		<Element name="RightWall">
+			<TransformComponent x="3.041" y="1.000" z="0.062" rotation="-90.000" rotationX="-0.000" rotationY="-90.000" rotationZ="0.000" />
+			<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="7.864" Height="2.000" Depth="0.126" />
+			<Component type="MeshRenderer" Mesh="csg_mesh" />
+		</Element>
+		<Element name="CSGBox3D4">
+			<TransformComponent x="-2.959" y="1.000" z="0.080" rotation="-90.000" rotationX="-0.000" rotationY="-90.000" rotationZ="0.000" />
+			<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="7.900" Height="2.000" Depth="0.126" />
+			<Component type="MeshRenderer" Mesh="csg_mesh" />
+		</Element>
+	</Element>
+	<Element name="Node3D">
+		<TransformComponent x="0.000" y="0.900" z="-1.600" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+	</Element>
+	<Element name="CSGBox3D">
+		<TransformComponent x="-4.000" y="-0.250" z="-14.550" rotation="0.000" rotationX="-0.000" rotationY="0.000" rotationZ="0.000" />
+		<ColliderComponent Shape="Box" Width="23.975" Height="0.490" Depth="23.695" IsTrigger="false" />
+		<Component type="MeshComponent" name="csg_mesh" Shape="Box" Width="24.000" Height="0.500" Depth="44.700" />
+		<Component type="MeshRenderer" Mesh="csg_mesh" />
+		<MaterialComponent R="0.458" G="0.458" B="0.458" A="1.000" Metallic="0.000" Roughness="1.000" AlbedoTexture="v12://hotreload/prototype_textures/textures/blue_texture.png" Uv1OffsetX="0.000" Uv1OffsetY="-0.190" />
+	</Element>
+	<Element name="SpotLight3D">
+		<TransformComponent x="-4.418" y="6.259" z="-4.395" rotation="0.000" rotationX="-60.896" rotationY="0.000" rotationZ="0.000" />
+		<GenericLightComponent Type="Spot" colorR="1.000" colorG="1.000" colorB="1.000" range="156.012" energy="1.000" angle="45.00" spotSoftness="1.000" shadowEnabled="False" />
+	</Element>
 </World>

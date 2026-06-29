@@ -57,6 +57,7 @@ public partial class V12Player : Node3D, IV12ComponentNode
 
     public string GetV12ComponentXml(string indent)
     {
+        var out_ = "";
         var methodStr = PreferredInputMethod switch
         {
             InputMode.Desktop => "Desktop",
@@ -64,16 +65,29 @@ public partial class V12Player : Node3D, IV12ComponentNode
             _ => "Auto"
         };
 
-        return $"{indent}\t<PlayerComponent" +
-               $" preferredInputMethod=\"{methodStr}\"" +
-               $" moveSpeed=\"{MoveSpeed:F3}\"" +
-               $" sprintMultiplier=\"{SprintMultiplier:F3}\"" +
-               $" jumpStrength=\"{JumpStrength:F3}\"" +
-               $" lookSensitivity=\"{LookSensitivity:F3}\"" +
-               $" canJump=\"{CanJump.ToString().ToLower()}\"" +
-               $" enableHandTracking=\"{EnableHandTracking.ToString().ToLower()}\"" +
-               $" vrMoveSpeed=\"{VrMoveSpeed:F3}\"" +
-               $" vrSmoothLocomotion=\"{VrSmoothLocomotion.ToString().ToLower()}\"" +
-               $" />\n";
+        out_ += $"{indent}\t<PlayerComponent" +
+                $" preferredInputMethod=\"{methodStr}\"" +
+                $" moveSpeed=\"{MoveSpeed:F3}\"" +
+                $" sprintMultiplier=\"{SprintMultiplier:F3}\"" +
+                $" jumpStrength=\"{JumpStrength:F3}\"" +
+                $" lookSensitivity=\"{LookSensitivity:F3}\"" +
+                $" canJump=\"{CanJump.ToString().ToLower()}\"" +
+                $" />\n";
+
+        if (PreferredInputMethod == InputMode.Xr)
+        {
+            out_ += $"{indent}\t<VRPlayerComponent" +
+                    $" moveSpeed=\"{MoveSpeed:F3}\"" +
+                    $" sprintMultiplier=\"{SprintMultiplier:F3}\"" +
+                    $" jumpStrength=\"{JumpStrength:F3}\"" +
+                    $" lookSensitivity=\"{LookSensitivity:F3}\"" +
+                    $" canJump=\"{CanJump.ToString().ToLower()}\"" +
+                    $" enableHandTracking=\"{EnableHandTracking.ToString().ToLower()}\"" +
+                    $" vrMoveSpeed=\"{VrMoveSpeed:F3}\"" +
+                    $" vrSmoothLocomotion=\"{VrSmoothLocomotion.ToString().ToLower()}\"" +
+                    $" />\n";
+        }
+
+        return out_;
     }
 }

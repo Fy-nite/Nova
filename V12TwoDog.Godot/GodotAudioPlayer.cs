@@ -76,34 +76,10 @@ namespace V12TwoDog
         {
             if (snapshot == null) return;
 
-            // ── Update listener ──
-            if (snapshot.Listener.HasValue)
-            {
-                var pos = new Vector3(
-                    snapshot.Listener.Position.X,
-                    snapshot.Listener.Position.Y,
-                    snapshot.Listener.Position.Z);
-                var fwd = new Vector3(
-                    snapshot.Listener.Forward.X,
-                    snapshot.Listener.Forward.Y,
-                    snapshot.Listener.Forward.Z);
-                var up = new Vector3(
-                    snapshot.Listener.Up.X,
-                    snapshot.Listener.Up.Y,
-                    snapshot.Listener.Up.Z);
-
-                if (fwd != Vector3.Zero && up != Vector3.Zero)
-                {
-                    var right = fwd.Cross(up).Normalized();
-                    var orthoUp = right.Cross(fwd).Normalized();
-                    _listener.GlobalTransform = new Transform3D(
-                        new Basis(right, orthoUp, -fwd), pos);
-                }
-                else
-                {
-                    _listener.GlobalPosition = pos;
-                }
-            }
+            // ── Reparent listener to the active camera so it follows the head ──
+            var cam = GetViewport()?.GetCamera3D();
+            if (cam != null && _listener.GetParent() != cam)
+                _listener.Reparent(cam);
 
             // ── Build set of current audio source IDs ──
             var currentIds = new HashSet<long>();
