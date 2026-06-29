@@ -290,17 +290,62 @@ public static class NodeConverter3D
         return "";
     }
 
-    public static string BuildRigidBodyXml(Node3D node, string ind)
+    public static string BuildPhysicsBodyXml(Node3D node, string ind)
     {
         var parent = node.GetParent();
         if (parent == null) return "";
         var pcls = parent.GetClass();
-        if (pcls != "RigidBody3D") return "";
+        if (pcls == "RigidBody3D")
+        {
+            var mass = (float)parent.Get("mass");
+            var gravityScale = (float)parent.Get("gravity_scale");
+            var frozen = (bool)parent.Get("freeze");
+            return $"{ind}\t<RigidBodyComponent mass=\"{mass:F3}\" gravityScale=\"{gravityScale:F3}\" isKinematic=\"{frozen}\" />\n";
+        }
+        if (pcls == "StaticBody3D")
+            return $"{ind}\t<PhysicsBodyComponent IsKinematic=\"true\" />\n";
+        return "";
+    }
 
-        var mass = (float)parent.Get("mass");
-        var gravityScale = (float)parent.Get("gravity_scale");
-        var frozen = (bool)parent.Get("freeze");
-        return $"{ind}\t<RigidBodyComponent mass=\"{mass:F3}\" gravityScale=\"{gravityScale:F3}\" isKinematic=\"{frozen}\" />\n";
+    public static string BuildStaticBodySelfXml(StaticBody3D body, string ind)
+    {
+        var out_ = $"{ind}\t<PhysicsBodyComponent IsKinematic=\"true\" />\n";
+        foreach (Node child in body.GetChildren())
+        {
+            if (child is CollisionShape3D cs && cs.Shape != null)
+                out_ += ColliderShapeXml(cs.Shape, ind);
+        }
+        return out_;
+    }
+
+    private static string ColliderShapeXml(Shape3D shape, string ind)
+    {
+        var cls = shape.GetClass();
+        var w = 1.0; var h = 1.0; var d = 1.0;
+        var name = "Box";
+
+        if (cls == "BoxShape3D")
+        {
+            var sz = ((BoxShape3D)shape).Size;
+            w = sz.X; h = sz.Y; d = sz.Z;
+        }
+        else if (cls == "SphereShape3D")
+        {
+            w = ((SphereShape3D)shape).Radius * 2.0; h = w; d = w;
+            name = "Sphere";
+        }
+        else if (cls == "CapsuleShape3D")
+        {
+            w = ((CapsuleShape3D)shape).Radius * 2.0; h = ((CapsuleShape3D)shape).Height; d = w;
+            name = "Capsule";
+        }
+        else if (cls == "CylinderShape3D")
+        {
+            w = ((CylinderShape3D)shape).Radius * 2.0; h = ((CylinderShape3D)shape).Height; d = w;
+            name = "Cylinder";
+        }
+
+        return $"{ind}\t<ColliderComponent Shape=\"{name}\" Width=\"{w:F3}\" Height=\"{h:F3}\" Depth=\"{d:F3}\" />\n";
     }
 
 	private static string BuildCustomMeshXml(Mesh mesh, string ind, string meshName)

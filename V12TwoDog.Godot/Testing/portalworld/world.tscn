@@ -25,6 +25,9 @@ _surfaces = [{
 "vertex_data": PackedByteArray("AABAwQAAgL7NzLJBAABAwQAAgL7NzLLBAABAwQAAgD7NzLLBAABAQQAAgL7NzLLBAABAwQAAgL7NzLLBAABAwQAAgL7NzLJBAABAwQAAgD7NzLLBAABAwQAAgL7NzLLBAABAQQAAgL7NzLLBAABAwQAAgD7NzLLBAABAwQAAgD7NzLJBAABAwQAAgL7NzLJBAABAwQAAgL7NzLJBAABAwQAAgD7NzLJBAABAQQAAgD7NzLJBAABAQQAAgD7NzLJBAABAwQAAgD7NzLJBAABAwQAAgD7NzLLBAABAwQAAgL7NzLJBAABAQQAAgL7NzLJBAABAQQAAgL7NzLLBAABAQQAAgD7NzLJBAABAQQAAgL7NzLJBAABAwQAAgL7NzLJBAABAQQAAgL7NzLLBAABAQQAAgL7NzLJBAABAQQAAgD7NzLJBAABAQQAAgL7NzLLBAABAQQAAgD7NzLLBAABAwQAAgD7NzLLBAABAwQAAgD7NzLLBAABAQQAAgD7NzLLBAABAQQAAgD7NzLJBAABAQQAAgD7NzLJBAABAQQAAgD7NzLLBAABAQQAAgL7NzLLBAAD/f/9//n8AAP9//3/+fwAA/3//f/5//38AAP//AAD/fwAA//8AAP9/AAD//wAA/////wAA/z//////AAD/P/////8AAP8/AAD/f/9//n8AAP9//3/+fwAA/3//f/5//3//fwAA/z//f/9/AAD/P/9//38AAP8//3//////AAD/f/////8AAP9//////wAA/38AAP//AAD/fwAA//8AAP9/AAD//wAA/3//fwAA/z//f/9/AAD/P/9//38AAP8/////f/9//n////9//3/+f////3//f/5//////wAA/z//////AAD/P/////8AAP8//3//////AAD/f/////8AAP9//////wAA////f/9//n////9//3/+f////3//f/5/")
 }]
 
+[sub_resource type="ConcavePolygonShape3D" id="ConcavePolygonShape3D_cvuku"]
+data = PackedVector3Array(-12, -0.25, 22.35, -12, -0.25, -22.35, -12, 0.25, -22.35, 12, -0.25, -22.35, -12, -0.25, -22.35, -12, -0.25, 22.35, -12, 0.25, -22.35, -12, -0.25, -22.35, 12, -0.25, -22.35, -12, 0.25, -22.35, -12, 0.25, 22.35, -12, -0.25, 22.35, -12, -0.25, 22.35, -12, 0.25, 22.35, 12, 0.25, 22.35, 12, 0.25, 22.35, -12, 0.25, 22.35, -12, 0.25, -22.35, -12, -0.25, 22.35, 12, -0.25, 22.35, 12, -0.25, -22.35, 12, 0.25, 22.35, 12, -0.25, 22.35, -12, -0.25, 22.35, 12, -0.25, -22.35, 12, -0.25, 22.35, 12, 0.25, 22.35, 12, -0.25, -22.35, 12, 0.25, -22.35, -12, 0.25, -22.35, -12, 0.25, -22.35, 12, 0.25, -22.35, 12, 0.25, 22.35, 12, 0.25, 22.35, 12, 0.25, -22.35, 12, -0.25, -22.35)
+
 [node name="Prototype" type="Node3D" unique_id=1831033359]
 
 [node name="CSGRoot" type="CSGCombiner3D" parent="." unique_id=503339379]
@@ -72,6 +75,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.90000004, -1.6)
 [node name="CSGBakedMeshInstance3D" type="MeshInstance3D" parent="." unique_id=1362946368]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -14.549999)
 mesh = SubResource("ArrayMesh_72rlg")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1773828677]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -14.549999)
+shape = SubResource("ConcavePolygonShape3D_cvuku")
 
 [node name="SpotLight3D" type="SpotLight3D" parent="." unique_id=2004987224]
 transform = Transform3D(1, 0, 0, 0, 0.48640108, 0.87373567, 0, -0.87373567, 0.48640108, -4.4181566, 6.259409, -4.3954754)

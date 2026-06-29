@@ -56,6 +56,24 @@ public static class WorldMLExporter
 
         if (SkipClasses.Contains(cls))
         {
+            // Check if this body has any non-skipped (visual) children.
+            bool hasVisualChild = false;
+            foreach (Node c in node.GetChildren())
+            {
+                if (!SkipClasses.Contains(c.GetClass()) && !IsComponentNode(c))
+                { hasVisualChild = true; break; }
+            }
+
+            if (!hasVisualChild && node is StaticBody3D sb)
+            {
+                // No visual child — export the body itself with colliders.
+                out_ += $"{ind}<Element name=\"{node.Name}\">\n";
+                out_ += NodeConverter3D.BuildTransformXml(sb, ind);
+                out_ += NodeConverter3D.BuildStaticBodySelfXml(sb, ind);
+                out_ += $"{ind}</Element>\n";
+                return out_;
+            }
+
             foreach (Node c in node.GetChildren())
                 out_ += AppendElementForNode(c, indent, worldName);
             return out_;
@@ -80,7 +98,7 @@ public static class WorldMLExporter
 
             out_ += NodeConverter3D.BuildMeshXml(n3d, ind, worldName);
             out_ += NodeConverter3D.HarvestCollider(n3d, ind);
-            out_ += NodeConverter3D.BuildRigidBodyXml(n3d, ind);
+            out_ += NodeConverter3D.BuildPhysicsBodyXml(n3d, ind);
             out_ += NodeConverter3D.BuildLightXml(n3d, ind);
 
             if (node is Camera3D cam)
