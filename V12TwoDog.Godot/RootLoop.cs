@@ -56,6 +56,8 @@ public partial class RootLoop : Node3D
     // ── Player sync ──
     private float _playerSyncTimer = 0f;
     private const float PlayerSyncInterval = 0.1f; // Send player sync 10 times per second
+    private const float HeartbeatIntervalSeconds = 5f; // Send heartbeat every 5 seconds
+    private float _heartbeatTimer = 0f;
     private ConcurrentQueue<MessageDTO> _pendingNetworkMessages = new();
     private bool _debugMode = false;
     private bool _f8WasPressed = false;
@@ -428,12 +430,44 @@ public partial class RootLoop : Node3D
         // ── Read physics results back after Godot's physics tick ──
         _godotPhysics?.ReadbackAll();
 
-        // ── Update laser visual ──
-        UpdateLaser();
+        // ── Tween remote player positions BEFORE capturing the frame ──
+        // This ensures the interpolated positions are baked into the snapshot
+        // for the renderer rather than being one frame behind.
+        if (_remoteTweens.Count > 0)
+        {
+            float t = 1f - MathF.Exp(-TweenSpeed * (float)delta);
+            foreach (var kvp in _remoteTweens)
+            {
+                long playerId = kvp.Key;
+                RemoteTweenState state = kvp.Value;
 
-        // ── Consume latest frame snapshot on main thread ──
-        while (_frameQueue.TryDequeue(out var frame))
-            _latestFrame = frame;
+                var newVisPos = System.Numerics.Vector3.Lerp(
+                    new System.Numerics.Vector3(state.VisualPosition.X, state.VisualPosition.Y, state.VisualPosition.Z),
+                    new System.Numerics.Vector3(state.TargetPosition.X, state.TargetPosition.Y, state.TargetPosition.Z),
+                    t);
+
+                var newVisRot = System.Numerics.Quaternion.Slerp(state.VisualRotation, state.TargetRotation, t);
+
+                var remoteName = $"RemotePlayer_{playerId}";
+                var remote = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remoteName);
+                if (remote != null)
+                {
+                    remote.LocalTransform = new TRS
+                    {
+                        Position = new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
+                        Rotation = newVisRot,
+                        Scale = System.Numerics.Vector3.One
+                    };
+                }
+
+                _remoteTweens[playerId] = new RemoteTweenState(
+                    new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
+                    newVisRot,
+                    state.TargetPosition,
+                    state.TargetRotation);
+            }
+        }
+
 
         if (_latestFrame != null)
         {
@@ -470,45 +504,21 @@ public partial class RootLoop : Node3D
             SendPlayerDataToServer();
         }
 
-        // ── Tween remote players ──
-        if (_remoteTweens.Count > 0)
+        // ── Heartbeat: send a heartbeat message every HeartbeatInterval seconds ──
+        _heartbeatTimer += (float)delta;
+        if (_heartbeatTimer >= HeartbeatIntervalSeconds)
         {
-            float t = 1f - MathF.Exp(-TweenSpeed * (float)delta); // Exponential decay factor
-            var toRemove = new List<long>();
-
-            foreach (var kvp in _remoteTweens)
+            _heartbeatTimer = 0f;
+            var client = root.Registry.Get<NetworkClient>("NetworkClient");
+            if (client != null && client.IsConnected)
             {
-                long playerId = kvp.Key;
-                RemoteTweenState state = kvp.Value;
-
-                // Interpolate position (fully qualify Numerics types to avoid Godot.Vector3 ambiguity)
-                var newVisPos = System.Numerics.Vector3.Lerp(
-                    new System.Numerics.Vector3(state.VisualPosition.X, state.VisualPosition.Y, state.VisualPosition.Z),
-                    new System.Numerics.Vector3(state.TargetPosition.X, state.TargetPosition.Y, state.TargetPosition.Z),
-                    t);
-
-                // Interpolate rotation using quaternion slerp
-                var newVisRot = System.Numerics.Quaternion.Slerp(state.VisualRotation, state.TargetRotation, t);
-
-                // Find the remote player element and update its transform
-                var remoteName = $"RemotePlayer_{playerId}";
-                var remote = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remoteName);
-                if (remote != null)
+                root.Cables.SendData(new MessageDTO
                 {
-                    remote.LocalTransform = new TRS
-                    {
-                        Position = new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
-                        Rotation = newVisRot,
-                        Scale = System.Numerics.Vector3.One
-                    };
-                }
-
-                // Update stored state
-                _remoteTweens[playerId] = new RemoteTweenState(
-                    new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
-                    newVisRot,
-                    state.TargetPosition,
-                    state.TargetRotation);
+                    Sender = new Uri("networkcables://client"),
+                    MessageType = MessageType.Heartbeat,
+                    Message = Array.Empty<byte>()
+                });
+                if (_debugMode) GD.Print($"[Network] 💓 Heartbeat sent");
             }
         }
     }
@@ -783,6 +793,12 @@ public partial class RootLoop : Node3D
                     {
                         GD.PrintErr($"[Network] Error processing WorldArchive: {ex.Message}");
                     }
+                    break;
+
+                case MessageType.Heartbeat:
+                    // Heartbeats are informational — client already knows it's connected.
+                    // No action needed. (Sender echo is handled by the PlayerSync ignore logic.)
+                    if (_debugMode) GD.Print($"[Network] 💓 Heartbeat received from {message.Sender}");
                     break;
 
                 case MessageType.PlayerSync:
