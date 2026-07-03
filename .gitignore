@@ -1,9 +1,17 @@
 # .NET build outputs
 bin/
 obj/
+*.pdb
+
+# Ignore everything else (NuGet cache, build output, etc.)
 *.dll
 *.exe
-*.pdb
+
+# Keep Godot addon native plugin binaries (must come after blanket *.dll)
+!V12TwoDog.Godot/addons/**/*.dll
+!V12TwoDog.Godot/addons/**/*.so
+!V12TwoDog.Godot/addons/**/*.dylib
+!V12TwoDog.Godot/addons/**/*.a
 
 # User-specific files
 *.user
