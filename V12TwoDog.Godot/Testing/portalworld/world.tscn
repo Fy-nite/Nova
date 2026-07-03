@@ -80,7 +80,7 @@ mesh = SubResource("ArrayMesh_72rlg")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -14.549999)
 shape = SubResource("ConcavePolygonShape3D_cvuku")
 
-[node name="SpotLight3D" type="SpotLight3D" parent="." unique_id=2004987224]
-transform = Transform3D(1, 0, 0, 0, 0.48640108, 0.87373567, 0, -0.87373567, 0.48640108, -4.4181566, 6.259409, -4.3954754)
-spot_range = 156.012
-spot_attenuation = -0.1
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=950098532]
+transform = Transform3D(0.99817044, 0.052868646, 0.029337257, -0.059368122, 0.76507586, 0.64119756, 0.0114540225, -0.6417662, 0.7668148, 0, 0, 0)
+light_indirect_energy = 1.133
+light_specular = 0.067

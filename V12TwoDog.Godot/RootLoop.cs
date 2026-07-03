@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -17,6 +18,7 @@ using V12.Core.Interfaces.Renderer;
 using V12.Core.Networking;
 using V12.Core.Rendering;
 using V12.SampleGame;
+using V12.WorldML;
 using V12TwoDog;
 
 public partial class RootLoop : Node3D
@@ -26,6 +28,8 @@ public partial class RootLoop : Node3D
     IGameService Bootstrap;
     GodotAudioPlayer audioPlayer;
     DebugGameService debug;
+    NetworkInspector _networkInspector;
+    WorldInspector _worldInspector;
 	readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
 	Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
@@ -105,7 +109,22 @@ public partial class RootLoop : Node3D
         root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _godotPhysics);
 
         root.CreateWorld("TestWorld");
+
+        // ── Multiplayer client ─────────────────────────────────────────
+        // Connects to a headless server at 127.0.0.1:7777. The server's
+        // WorldSync replaces the local world; subsequent WorldUpdate
+        // messages apply incremental dirty changes.
+        root.SetupNetworking(7777, "127.0.0.1");
+        root.Cables.OnMessageReceived += HandleNetworkMessage;
+
+        _networkInspector = new NetworkInspector(root);
+        ImGui.OnLayout(_networkInspector.OnLayout);
+
+        _worldInspector = new WorldInspector(root);
+        ImGui.OnLayout(_worldInspector.OnLayout);
+
 		root.Initialize();
+        // Networking is set up but not auto-started. Use Network Inspector UI to connect manually.
 
         // Initialize physics services
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
@@ -384,6 +403,123 @@ public partial class RootLoop : Node3D
             _laserHit.Position = hit;
             var mat = _laserHit.MaterialOverride as StandardMaterial3D;
             if (mat != null) mat.AlbedoColor = color;
+        }
+    }
+
+    // ── Network message handler ────────────────────────────────────────
+    private void HandleNetworkMessage(MessageDTO message)
+    {
+        if (message == null) return;
+
+        try
+        {
+            switch (message.MessageType)
+            {
+                case MessageType.WorldSync:
+                    var received = AncientCompressor.Decompress<World>(message.Message);
+                    var prevPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+                    var prevCamera = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "PlayerCamera3D");
+                    if (prevPlayer != null)
+                        root.SelectedWorld?.RemoveElement(prevPlayer);
+                    if (prevCamera != null)
+                        root.SelectedWorld?.RemoveElement(prevCamera);
+                    var existing = root.Worlds.Find(w => w.WorldName == received.WorldName);
+                    if (existing != null)
+                    {
+                        existing.ReplaceFrom(received);
+                    }
+                    else
+                    {
+                        root.Worlds.Add(received);
+                        existing = received;
+                    }
+                    root.SelectWorld(existing);
+                    if (prevPlayer != null && !existing.Root.Any(e => e.Name == "Player"))
+                        existing.AddElement(prevPlayer);
+                    if (prevCamera != null && !existing.Root.Any(e => e.Name == "PlayerCamera3D"))
+                        existing.AddElement(prevCamera);
+                    root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(existing);
+                    GD.Print($"[Network] WorldSync applied: '{existing.WorldName}' ({existing.Root.Count} root elements)");
+                    break;
+
+                case MessageType.WorldArchive:
+                    try
+                    {
+                        var data = message.Message;
+                        int nameLen = BitConverter.ToInt32(data, 0);
+                        var fileName = Encoding.UTF8.GetString(data, 4, nameLen);
+                        var archiveBytes = data.AsSpan(4 + nameLen).ToArray();
+
+                        var worldName = Path.GetFileNameWithoutExtension(fileName);
+                        var tempDir = Path.Combine(Path.GetTempPath(), "V12Worlds", worldName + "_" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(tempDir);
+
+                        var tempPath = Path.Combine(Path.GetTempPath(), fileName);
+                        File.WriteAllBytes(tempPath, archiveBytes);
+                        ZipFile.ExtractToDirectory(tempPath, tempDir);
+                        File.Delete(tempPath);
+
+                        var resolver = new V12AssetResolver();
+                        resolver.Mount(worldName, tempDir);
+                        root.Registry.Register("AssetResolver", resolver);
+
+                        var templates = new WorldTemplateProvider();
+                        var templatesDir = Path.Combine(tempDir, "templates");
+                        if (Directory.Exists(templatesDir))
+                            templates.LoadFromDirectory(templatesDir);
+                        root.Registry.Register("TemplateProvider", templates);
+
+                        GD.Print($"[Network] V12World archive received: '{fileName}' ({archiveBytes.Length} bytes) → {tempDir}");
+                    }
+                    catch (Exception ex)
+                    {
+                        GD.Print($"[Network] Error processing WorldArchive: {ex.Message}");
+                    }
+                    break;
+
+                case MessageType.WorldUpdate:
+                    ComponentBatchDTO batch = null;
+                    try { batch = AncientCompressor.Decompress<ComponentBatchDTO>(message.Message); }
+                    catch { }
+
+                    if (batch == null || batch.Components.Count == 0) break;
+
+                    lock (root)
+                    {
+                        var world = root.SelectedWorld;
+                        if (world == null) break;
+
+                        foreach (var snapshot in batch.Components)
+                        {
+                            if (snapshot.Payload == null || snapshot.Payload.Length == 0) continue;
+                            try
+                            {
+                                var csDto    = AncientCompressor.Decompress<ComponentSyncDTO>(snapshot.Payload);
+                                var incoming = AncientCompressor.DecompressComponent(csDto);
+                                if (incoming == null) continue;
+
+                                foreach (var element in world.Root)
+                                {
+                                    var target = element.Components.Find(c => c.Id == snapshot.Id);
+                                    if (target == null) continue;
+                                    foreach (var prop in incoming.GetType()
+                                        .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                                    {
+                                        if (prop.Name == "Id" || !prop.CanRead || !prop.CanWrite) continue;
+                                        try { prop.SetValue(target, prop.GetValue(incoming)); } catch { }
+                                    }
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.Print($"[Network] Error handling {message.MessageType}: {ex.Message}");
         }
     }
 
