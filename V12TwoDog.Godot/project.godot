@@ -21,8 +21,6 @@ config/icon="uid://c0pjr5qikrm80"
 
 [autoload]
 
-DebugMenu="*uid://cggqb75a8w8r"
-MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
 ImGui="*uid://b7gfghxop1jan"
 
 [display]
