@@ -9,7 +9,7 @@ namespace V12TwoDog
     public class NetworkInspector
     {
         private readonly GameRoot _root;
-        private string _host = "127.0.0.1";
+        private string _host = "mc.finite.ovh";
         private int _port = 7777;
         private bool _showDemo;
         private bool _showPacketLog;
