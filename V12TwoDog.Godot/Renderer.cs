@@ -425,7 +425,10 @@ namespace V12TwoDog
 					if (node is Light3D light3D)
 					{
 						var col = rs.LightColor;
-						light3D.LightColor = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
+						var godotColor = new Color(col.R / 255f, col.G / 255f, col.B / 255f);
+						if (V12.Core.NetworkCable.NetworkHost.DebugMode)
+							GD.PrintErr($"[Renderer] Setting light color: System.Drawing.Color({col.R},{col.G},{col.B}) → Godot.Color({godotColor.R:F3},{godotColor.G:F3},{godotColor.B:F3})");
+						light3D.LightColor = godotColor;
 						light3D.LightEnergy = rs.LightIntensity;
 						if (light3D is OmniLight3D omni)
 							omni.OmniRange = rs.LightRange;

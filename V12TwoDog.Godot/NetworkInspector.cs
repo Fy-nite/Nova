@@ -60,9 +60,9 @@ namespace V12TwoDog
                     {
                         if (ImGui.Button("Connect"))
                         {
-                            var nc = new NetworkClient(_host, _port, _root.Cables);
-                            _root.Registry.Register("NetworkClient", nc);
-                            _ = nc.ConnectAsync();
+                            // Always use the existing client created by SetupNetworking.
+                            // The host/port fields in the UI are informational only.
+                            _ = client.ConnectAsync();
                         }
                     }
                 }

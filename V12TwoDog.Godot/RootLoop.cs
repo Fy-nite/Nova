@@ -10,11 +10,13 @@ using System.Text;
 using System.Threading;
 using V12.Basic.Components;
 using V12.Components;
+using V12.Components.Renderables;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Input;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
+using V12.Core.NetworkCable;
 using V12.Core.Networking;
 using V12.Core.Rendering;
 using V12.SampleGame;
@@ -48,6 +50,13 @@ public partial class RootLoop : Node3D
     private CancellationTokenSource _cts;
     private ConcurrentQueue<FrameSnapshot> _frameQueue = new();
     private FrameSnapshot _latestFrame;
+    
+    // ── Player sync ──
+    private float _playerSyncTimer = 0f;
+    private const float PlayerSyncInterval = 0.1f; // Send player sync 10 times per second
+    private ConcurrentQueue<MessageDTO> _pendingNetworkMessages = new();
+    private bool _debugMode = false;
+    private bool _f8WasPressed = false;
 
     public override void _Input(Godot.InputEvent @event)
     {
@@ -116,6 +125,43 @@ public partial class RootLoop : Node3D
         // messages apply incremental dirty changes.
         root.SetupNetworking(7777, "127.0.0.1");
         root.Cables.OnMessageReceived += HandleNetworkMessage;
+        
+        // Send player data to server when connected
+        var networkClient = root.Registry.Get<NetworkClient>("NetworkClient");
+        if (networkClient != null)
+        {
+            networkClient.OnConnected += () =>
+            {
+                GD.Print("[Network] ✅ Connected to server!");
+                if (_debugMode) GD.Print($"[Network] 📡 NetworkClient.IsConnected: {networkClient.IsConnected}");
+                if (_debugMode) GD.Print("[Network] 📤 Sending initial player data...");
+                SendPlayerDataToServer();
+            };
+            networkClient.OnDisconnected += () =>
+            {
+                GD.Print("[Network] ❌ Disconnected from server");
+                // Clean up all remote players
+                if (root.SelectedWorld != null)
+                {
+                    var remotePlayers = root.SelectedWorld.Root
+                        .Where(e => e.Name != null && e.Name.StartsWith("RemotePlayer_"))
+                        .ToList();
+                    foreach (var rp in remotePlayers)
+                    {
+                        root.SelectedWorld.RemoveElement(rp);
+                        GD.Print($"[Network] 🧹 Removed remote player '{rp.Name}'");
+                    }
+                }
+            };
+            networkClient.OnConnectionFailed += (ex) =>
+            {
+                GD.PrintErr($"[Network] ❌ Connection failed: {ex.Message}");
+            };
+        }
+        else
+        {
+            GD.PrintErr("[Network] ❌ NetworkClient not found in registry!");
+        }
 
         _networkInspector = new NetworkInspector(root);
         ImGui.OnLayout(_networkInspector.OnLayout);
@@ -187,6 +233,9 @@ public partial class RootLoop : Node3D
 
             try
             {
+                // Process any pending network messages on this thread (safe to modify world)
+                ProcessPendingNetworkMessages();
+
                 root.Update(dt);
 
                 var frame = root.CaptureFrame();
@@ -299,6 +348,20 @@ public partial class RootLoop : Node3D
 				if (_xr?.IsAvailable != true)
 					SetMouseCaptured(!_mouseCaptured);
 			}
+			// F10 toggles debug logging
+			if (Input.IsKeyPressed(Key.F10))
+			{
+				if (!_f8WasPressed)
+				{
+					_debugMode = !_debugMode;
+					GD.Print($"[Debug] Debug mode: {(_debugMode ? "ON" : "OFF")}");
+					_f8WasPressed = true;
+				}
+			}
+			else
+			{
+				_f8WasPressed = false;
+			}
 			if (Input.IsActionJustPressed("interact"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "interact", Value = 1 });
 			if (Input.IsActionJustReleased("interact"))
@@ -369,6 +432,32 @@ public partial class RootLoop : Node3D
 
         _portalBinding?.Update();
         debug.Update((float)delta);
+        
+        // ── Periodic status logging ──
+        // Log connection status and world state every 5 seconds
+        if (_debugMode && (int)(_playerSyncTimer * 10) % 50 == 0 && _playerSyncTimer > 0.1f)
+        {
+            var nc = root.Registry.Get<NetworkClient>("NetworkClient");
+            GD.Print($"[Status] 📊 Client connected: {nc?.IsConnected ?? false}");
+            GD.Print($"[Status] 📦 Pending network messages: {_pendingNetworkMessages.Count}");
+            if (root.SelectedWorld != null)
+            {
+                GD.Print($"[Status] 🌍 World '{root.SelectedWorld.WorldName}': {root.SelectedWorld.Root.Count} root elements");
+                foreach (var elem in root.SelectedWorld.Root)
+                {
+                    GD.Print($"    - {elem.Name} (Id={elem.Id}, Components={elem.Components.Count})");
+                }
+            }
+        }
+
+        // ── Periodic player sync ──
+        _playerSyncTimer += (float)delta;
+        if (_playerSyncTimer >= PlayerSyncInterval)
+        {
+            _playerSyncTimer = 0f;
+            if (_debugMode) GD.Print($"[Network] ⏰ PlayerSync timer fired, sending data...");
+            SendPlayerDataToServer();
+        }
     }
 
     private void UpdateLaser()
@@ -406,8 +495,130 @@ public partial class RootLoop : Node3D
         }
     }
 
+    private void SendPlayerDataToServer()
+    {
+        var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+        if (player == null)
+        {
+            if (_debugMode) GD.PrintErr("[Network] ❌ No local player found to send to server");
+            return;
+        }
+
+        try
+        {
+            if (_debugMode)
+            {
+                GD.Print($"[Network] 📤 Preparing PlayerSync for '{player.Name}' (Id={player.Id})...");
+                GD.Print($"  Position: ({player.LocalTransform.Position.X:F2}, {player.LocalTransform.Position.Y:F2}, {player.LocalTransform.Position.Z:F2})");
+                GD.Print($"  Components: {player.Components.Count}");
+            }
+
+            var syncDto = new PlayerSyncDTO
+            {
+                PlayerId = player.Id,
+                PlayerName = player.Name ?? "Player",
+                Position = player.LocalTransform.Position,
+                Rotation = player.LocalTransform.Rotation,
+                ElementId = player.Id,
+                Timestamp = DateTime.UtcNow
+            };
+
+            // Serialize player components, skipping non-serializable ones
+            foreach (var comp in player.Components)
+            {
+                // Skip components that contain runtime references that can't be serialized
+                if (comp is PhysicsBodyComponent || comp is PlayerComponent)
+                {
+                    if (_debugMode) GD.Print($"  ⏭ Skipping {comp.GetType().Name} (non-serializable)");
+                    continue;
+                }
+
+                // Skip MeshRenderer — it's a wrapper that references a MeshComponent.
+                // We serialize the MeshComponent directly, and the receiver can reconstruct
+                // the MeshRenderer wrapper if needed. The Mesh property (IMeshRenderable)
+                // is a runtime reference that doesn't serialize cleanly.
+                if (comp is MeshRenderer)
+                {
+                    if (_debugMode) GD.Print($"  ⏭ Skipping MeshRenderer (wrapper, will be reconstructed)");
+                    continue;
+                }
+
+                try
+                {
+                    if (_debugMode) GD.Print($"  📦 Serializing {comp.GetType().Name}...");
+                    var csDto = AncientCompressor.CompressComponent(comp);
+                    if (csDto != null)
+                    {
+                        syncDto.Components.Add(csDto);
+                        if (_debugMode) GD.Print($"    ✅ {csDto.TypeName} ({csDto.Data?.Length ?? 0} bytes)");
+                    }
+                    else
+                    {
+                        if (_debugMode) GD.PrintErr($"    ❌ CompressComponent returned null");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"    ❌ Failed to serialize {comp.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            if (_debugMode) GD.Print($"[Network] 📦 Total components serialized: {syncDto.Components.Count}");
+
+            var message = new MessageDTO
+            {
+                Sender = new Uri("networkcables://client"),
+                MessageType = MessageType.PlayerSync,
+                Message = AncientCompressor.Compress(syncDto)
+            };
+
+            if (_debugMode) GD.Print($"[Network] 📤 Sending PlayerSync message ({message.Message.Length} bytes)...");
+            root.Cables.SendData(message);
+            if (_debugMode) GD.Print($"[Network] ✅ PlayerSync queued for send");
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Network] ❌ Failed to send player data: {ex.Message}");
+            if (_debugMode) GD.PrintErr($"  Stack: {ex.StackTrace}");
+        }
+    }
+
     // ── Network message handler ────────────────────────────────────────
+    // Called from the networking thread — queue for processing on the V12 worker thread
+    // to avoid race conditions with game logic.
     private void HandleNetworkMessage(MessageDTO message)
+    {
+        if (message == null) return;
+        if (_debugMode) GD.Print($"[Network] 📥 Received {message.MessageType} from {message.Sender?.AbsoluteUri} (queueing for processing)");
+        _pendingNetworkMessages.Enqueue(message);
+    }
+
+    // Called from the V12 worker thread — safe to modify world state here
+    private void ProcessPendingNetworkMessages()
+    {
+        int processed = 0;
+        while (_pendingNetworkMessages.TryDequeue(out var message))
+        {
+            processed++;
+            try
+            {
+                if (_debugMode) GD.Print($"[Network] 🔄 Processing {message.MessageType}...");
+                ProcessNetworkMessage(message);
+                if (_debugMode) GD.Print($"[Network] ✅ Finished processing {message.MessageType}");
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[Network] ❌ Error processing {message.MessageType}: {ex.Message}");
+                if (_debugMode) GD.PrintErr($"  Stack: {ex.StackTrace}");
+            }
+        }
+        if (processed > 0 && _debugMode)
+        {
+            GD.Print($"[Network] 📊 Processed {processed} message(s) this frame");
+        }
+    }
+
+    private void ProcessNetworkMessage(MessageDTO message)
     {
         if (message == null) return;
 
@@ -418,11 +629,21 @@ public partial class RootLoop : Node3D
                 case MessageType.WorldSync:
                     var received = AncientCompressor.Decompress<World>(message.Message);
                     var prevPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
-                    var prevCamera = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "PlayerCamera3D");
+                    var prevCamera = prevPlayer?.Children?.FirstOrDefault(e => e.Name == "PlayerCamera3D");
+                    
+                    // Clear physics body references before removing player
+                    if (prevPlayer != null)
+                    {
+                        var prevPhysicsBody = prevPlayer.GetComponent<PhysicsBodyComponent>();
+                        if (prevPhysicsBody != null)
+                        {
+                            prevPhysicsBody.Body = null;
+                            GD.Print($"[Network] Cleared physics body reference from local player");
+                        }
+                    }
+                    
                     if (prevPlayer != null)
                         root.SelectedWorld?.RemoveElement(prevPlayer);
-                    if (prevCamera != null)
-                        root.SelectedWorld?.RemoveElement(prevCamera);
                     var existing = root.Worlds.Find(w => w.WorldName == received.WorldName);
                     if (existing != null)
                     {
@@ -435,9 +656,18 @@ public partial class RootLoop : Node3D
                     }
                     root.SelectWorld(existing);
                     if (prevPlayer != null && !existing.Root.Any(e => e.Name == "Player"))
+                    {
                         existing.AddElement(prevPlayer);
-                    if (prevCamera != null && !existing.Root.Any(e => e.Name == "PlayerCamera3D"))
-                        existing.AddElement(prevCamera);
+                        GD.Print($"[Network] Re-added local player with {prevPlayer.Children.Count} children");
+                        if (prevCamera != null)
+                        {
+                            GD.Print($"[Network] Camera preserved as child of player");
+                        }
+                        else
+                        {
+                            GD.PrintErr($"[Network] WARNING: Camera was not found as child of player!");
+                        }
+                    }
                     root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(existing);
                     GD.Print($"[Network] WorldSync applied: '{existing.WorldName}' ({existing.Root.Count} root elements)");
                     break;
@@ -459,21 +689,215 @@ public partial class RootLoop : Node3D
                         ZipFile.ExtractToDirectory(tempPath, tempDir);
                         File.Delete(tempPath);
 
-                        var resolver = new V12AssetResolver();
-                        resolver.Mount(worldName, tempDir);
-                        root.Registry.Register("AssetResolver", resolver);
+                        // Check if an AssetResolver already exists — if so, add a mount to it
+                        // instead of creating a new one (Registry.Register fails silently if name exists)
+                        var existingResolver = root.Registry.Get<V12.Core.Interfaces.IAssetResolver>();
+                        if (existingResolver is V12AssetResolver vr)
+                        {
+                            vr.Mount(worldName, tempDir);
+                            GD.Print($"[Network] Added mount '{worldName}' → '{tempDir}' to existing AssetResolver");
+                        }
+                        else
+                        {
+                            var resolver = new V12AssetResolver();
+                            resolver.Mount(worldName, tempDir);
+                            root.Registry.Register("AssetResolver", resolver);
+                            GD.Print($"[Network] Registered new AssetResolver with mount '{worldName}' → '{tempDir}'");
+                        }
 
                         var templates = new WorldTemplateProvider();
                         var templatesDir = Path.Combine(tempDir, "templates");
                         if (Directory.Exists(templatesDir))
                             templates.LoadFromDirectory(templatesDir);
-                        root.Registry.Register("TemplateProvider", templates);
+                        
+                        var existingTemplates = root.Registry.Get<V12.WorldML.WorldTemplateProvider>();
+                        if (existingTemplates != null)
+                        {
+                            // Merge templates from the new archive
+                            if (Directory.Exists(templatesDir))
+                                existingTemplates.LoadFromDirectory(templatesDir);
+                            GD.Print($"[Network] Merged templates into existing TemplateProvider");
+                        }
+                        else
+                        {
+                            root.Registry.Register("TemplateProvider", templates);
+                            GD.Print($"[Network] Registered new TemplateProvider");
+                        }
 
                         GD.Print($"[Network] V12World archive received: '{fileName}' ({archiveBytes.Length} bytes) → {tempDir}");
                     }
                     catch (Exception ex)
                     {
-                        GD.Print($"[Network] Error processing WorldArchive: {ex.Message}");
+                        GD.PrintErr($"[Network] Error processing WorldArchive: {ex.Message}");
+                    }
+                    break;
+
+                case MessageType.PlayerSync:
+                    try
+                    {
+                        if (_debugMode) GD.Print($"[Network] 📨 Received PlayerSync message, deserializing...");
+                        var playerSync = AncientCompressor.Decompress<PlayerSyncDTO>(message.Message);
+                        if (playerSync == null)
+                        {
+                            if (_debugMode) GD.PrintErr($"[Network] ❌ PlayerSync deserialization returned null");
+                            break;
+                        }
+
+                        if (_debugMode)
+                        {
+                            GD.Print($"[Network] 📨 PlayerSync details:");
+                            GD.Print($"  PlayerName: {playerSync.PlayerName}");
+                            GD.Print($"  PlayerId: {playerSync.PlayerId}");
+                            GD.Print($"  Position: ({playerSync.Position.X:F2}, {playerSync.Position.Y:F2}, {playerSync.Position.Z:F2})");
+                            GD.Print($"  Components: {playerSync.Components.Count}");
+                        }
+
+                        // Check if this is our own player (ignore it)
+                        var localPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+                        if (localPlayer != null && localPlayer.Id == playerSync.PlayerId)
+                        {
+                            if (_debugMode) GD.Print($"[Network] ⏭ Ignoring own player sync (localPlayer.Id={localPlayer.Id} == sync.PlayerId={playerSync.PlayerId})");
+                            break;
+                        }
+
+                        if (_debugMode) GD.Print($"[Network] ✓ Not our player (localPlayer.Id={localPlayer?.Id ?? -1}, sync.PlayerId={playerSync.PlayerId})");
+
+                        // Create or update remote player
+                        var remotePlayerName = $"RemotePlayer_{playerSync.PlayerId}";
+                        var remotePlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remotePlayerName);
+
+                        if (_debugMode) GD.Print($"[Network] 🔍 Looking for existing remote player '{remotePlayerName}': {(remotePlayer != null ? "FOUND" : "NOT FOUND")}");
+
+                        if (remotePlayer == null)
+                        {
+                            if (_debugMode) GD.Print($"[Network] 🆕 Creating new remote player '{remotePlayerName}'...");
+
+                            // Create new remote player
+                            remotePlayer = new Element
+                            {
+                                Name = remotePlayerName,
+                                LocalTransform = new TRS
+                                {
+                                    Position = playerSync.Position,
+                                    Rotation = playerSync.Rotation,
+                                    Scale = System.Numerics.Vector3.One
+                                }
+                            };
+
+                            if (_debugMode) GD.Print($"[Network]   Created Element with Id={remotePlayer.Id}");
+                            if (_debugMode) GD.Print($"[Network]   Deserializing {playerSync.Components.Count} components...");
+
+                            // Deserialize components
+                            foreach (var csDto in playerSync.Components)
+                            {
+                                try
+                                {
+                                    if (_debugMode) GD.Print($"[Network]     Deserializing {csDto.TypeName} ({csDto.Data?.Length ?? 0} bytes)...");
+                                    var comp = AncientCompressor.DecompressComponent(csDto);
+                                    if (comp != null)
+                                    {
+                                        // Skip PlayerComponent for remote players (we don't control them)
+                                        if (comp is PlayerComponent)
+                                        {
+                                            if (_debugMode) GD.Print($"[Network]       ⏭ Skipping PlayerComponent");
+                                            continue;
+                                        }
+                                        
+                                        remotePlayer.Components.Add(comp);
+                                        comp.OnAttach(remotePlayer);
+                                        if (_debugMode) GD.Print($"[Network]       ✅ Added {comp.GetType().Name}");
+                                    }
+                                    else
+                                    {
+                                        if (_debugMode) GD.PrintErr($"[Network]       ❌ DecompressComponent returned null for {csDto.TypeName}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    GD.PrintErr($"[Network]       ❌ Failed to deserialize {csDto.TypeName}: {ex.Message}");
+                                }
+                            }
+
+                            if (_debugMode) GD.Print($"[Network]   Total components on remote player: {remotePlayer.Components.Count}");
+
+                            // If we have a MeshComponent but no MeshRenderer, create a MeshRenderer wrapper
+                            // so the remote player is visible. The renderer looks for IMeshRenderable components.
+                            var meshComp = remotePlayer.Components.OfType<MeshComponent>().FirstOrDefault();
+                            if (_debugMode) GD.Print($"[Network]   MeshComponent found: {(meshComp != null ? "YES" : "NO")}");
+                            if (meshComp != null && _debugMode)
+                            {
+                                GD.Print($"[Network]     Shape: {meshComp.Shape}, Size: ({meshComp.Width}, {meshComp.Height}, {meshComp.Depth})");
+                            }
+
+                            if (meshComp != null && !remotePlayer.Components.Any(c => c is MeshRenderer))
+                            {
+                                if (_debugMode) GD.Print($"[Network]   🎨 Creating MeshRenderer wrapper...");
+                                var mr = new MeshRenderer { Mesh = meshComp };
+                                remotePlayer.Components.Add(mr);
+                                mr.OnAttach(remotePlayer);
+                                if (_debugMode) GD.Print($"[Network]   ✅ MeshRenderer created and attached");
+                            }
+
+                            if (_debugMode) GD.Print($"[Network]   Adding remote player to world...");
+                            root.SelectedWorld?.AddElement(remotePlayer);
+                            if (_debugMode) GD.Print($"[Network]   ✅ Added to world. World now has {root.SelectedWorld?.Root.Count ?? 0} root elements");
+
+                            root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackElement(remotePlayer);
+                            if (_debugMode) GD.Print($"[Network] ✅ Remote player '{remotePlayerName}' created successfully");
+
+                            // Debug: list all root elements
+                            if (_debugMode)
+                            {
+                                GD.Print($"[Network] 📋 Current world root elements:");
+                                foreach (var elem in root.SelectedWorld?.Root)
+                                {
+                                    GD.Print($"    - {elem.Name} (Id={elem.Id}, Components={elem.Components.Count}, Children={elem.Children.Count})");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (_debugMode) GD.Print($"[Network] 🔄 Updating existing remote player '{remotePlayerName}'...");
+                            // Update existing remote player
+                            remotePlayer.LocalTransform = new TRS
+                            {
+                                Position = playerSync.Position,
+                                Rotation = playerSync.Rotation,
+                                Scale = System.Numerics.Vector3.One
+                            };
+                            if (_debugMode) GD.Print($"[Network] ✅ Updated remote player position to ({playerSync.Position.X:F2}, {playerSync.Position.Y:F2}, {playerSync.Position.Z:F2})");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        GD.PrintErr($"[Network] ❌ Error handling PlayerSync: {ex.Message}");
+                        if (_debugMode) GD.PrintErr($"  Stack: {ex.StackTrace}");
+                    }
+                    break;
+
+                case MessageType.PlayerLeave:
+                    try
+                    {
+                        var leaveDto = AncientCompressor.Decompress<PlayerLeaveDTO>(message.Message);
+                        if (leaveDto == null) break;
+
+                        GD.Print($"[Network] 📴 PlayerLeave received for PlayerId: {leaveDto.PlayerId}");
+
+                        var remotePlayerName = $"RemotePlayer_{leaveDto.PlayerId}";
+                        var remotePlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remotePlayerName);
+                        if (remotePlayer != null)
+                        {
+                            root.SelectedWorld?.RemoveElement(remotePlayer);
+                            GD.Print($"[Network] ✅ Removed remote player '{remotePlayerName}' from world");
+                        }
+                        else
+                        {
+                            if (_debugMode) GD.Print($"[Network] ⚠ Remote player '{remotePlayerName}' not found (already removed?)");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        GD.PrintErr($"[Network] ❌ Error handling PlayerLeave: {ex.Message}");
                     }
                     break;
 
