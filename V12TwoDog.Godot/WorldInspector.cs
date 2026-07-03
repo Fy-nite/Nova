@@ -1,7 +1,9 @@
 #nullable enable
 using Godot;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Reflection;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using NumVector3 = System.Numerics.Vector3;
@@ -19,6 +21,13 @@ namespace V12TwoDog
         private IComponent? _editingComponent;
         private readonly Dictionary<string, object> _pendingEdits = new();
         private bool _hasPendingEdits;
+
+        /// <summary>
+        /// Queue of edit actions to be processed on the V12 worker thread.
+        /// This avoids races between the Godot main thread (where the inspector runs)
+        /// and the V12 simulation thread.
+        /// </summary>
+        internal static ConcurrentQueue<Action> PendingEditActions = new();
 
         public WorldInspector(GameRoot root)
         {
@@ -294,25 +303,32 @@ namespace V12TwoDog
         {
             if (_editingComponent == null) return;
 
-            foreach (var kvp in _pendingEdits)
-            {
-                string[] parts = kvp.Key.Split('_');
-                if (parts.Length != 2) continue;
+            // Snapshot the pending data before it could be modified
+            var component = _editingComponent;
+            var pendingCopy = new Dictionary<string, object>(_pendingEdits);
 
-                string propName = parts[1];
-                var prop = _editingComponent.GetType().GetProperty(propName);
-                if (prop != null && prop.CanWrite)
+            PendingEditActions.Enqueue(() =>
+            {
+                foreach (var kvp in pendingCopy)
                 {
-                    try
+                    string[] parts = kvp.Key.Split('_');
+                    if (parts.Length != 2) continue;
+
+                    string propName = parts[1];
+                    var prop = component.GetType().GetProperty(propName);
+                    if (prop != null && prop.CanWrite)
                     {
-                        prop.SetValue(_editingComponent, kvp.Value);
-                    }
-                    catch
-                    {
-                        GD.PrintErr($"Failed to set {propName}");
+                        try
+                        {
+                            prop.SetValue(component, kvp.Value);
+                        }
+                        catch
+                        {
+                            GD.PrintErr($"Failed to set {propName}");
+                        }
                     }
                 }
-            }
+            });
 
             DiscardPendingEdits();
         }

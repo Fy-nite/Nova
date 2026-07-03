@@ -59,8 +59,12 @@ public partial class RootLoop : Node3D
     private const float HeartbeatIntervalSeconds = 5f; // Send heartbeat every 5 seconds
     private float _heartbeatTimer = 0f;
     private ConcurrentQueue<MessageDTO> _pendingNetworkMessages = new();
+    private ConcurrentQueue<System.Action> _pendingMainThreadActions = new();
     private bool _debugMode = false;
     private bool _f8WasPressed = false;
+
+    // ── Multi-world support ──
+    private string _localWorldName;
 
     // ── Remote player tweening ──
     private record RemoteTweenState(
@@ -131,6 +135,7 @@ public partial class RootLoop : Node3D
         root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _godotPhysics);
 
         root.CreateWorld("TestWorld");
+        _localWorldName = root.SelectedWorld?.WorldName;
 
         // ── Multiplayer client ─────────────────────────────────────────
         // Connects to a headless server at 127.0.0.1:7777. The server's
@@ -165,6 +170,22 @@ public partial class RootLoop : Node3D
                         GD.Print($"[Network] 🧹 Removed remote player '{rp.Name}'");
                     }
                 }
+
+                // If a server world was active, switch back to the local world
+                if (_localWorldName != null)
+                {
+                    var localWorld = root.Worlds.Find(w => w.WorldName == _localWorldName);
+                    if (localWorld != null && root.SelectedWorld != localWorld)
+                    {
+                        root.SelectWorld(localWorld);
+                        GD.Print($"[Network] 🔄 Switched back to local world '{_localWorldName}'");
+                        // Track the local world so the renderer picks it up
+                        root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(localWorld);
+                    }
+                }
+
+                // Clear remote tween targets
+                _remoteTweens.Clear();
             };
             networkClient.OnConnectionFailed += (ex) =>
             {
@@ -248,6 +269,10 @@ public partial class RootLoop : Node3D
             {
                 // Process any pending network messages on this thread (safe to modify world)
                 ProcessPendingNetworkMessages();
+
+                // Process queued inspector edits on this thread (safe to modify world)
+                while (WorldInspector.PendingEditActions.TryDequeue(out var editAction))
+                    editAction();
 
                 root.Update(dt);
 
@@ -468,6 +493,9 @@ public partial class RootLoop : Node3D
             }
         }
 
+        // ── Consume latest frame snapshot on main thread ──
+        while (_frameQueue.TryDequeue(out var frame))
+            _latestFrame = frame;
 
         if (_latestFrame != null)
         {
@@ -693,8 +721,12 @@ public partial class RootLoop : Node3D
                     var received = AncientCompressor.Decompress<World>(message.Message);
                     var prevPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
                     var prevCamera = prevPlayer?.Children?.FirstOrDefault(e => e.Name == "PlayerCamera3D");
-                    
-                    // Clear physics body references before removing player
+
+                    // Preserve the local world by naming the server world differently
+                    var serverWorldName = $"Server_{received.WorldName}";
+                    received.WorldName = serverWorldName;
+
+                    // Clear physics body references before removing player from current world
                     if (prevPlayer != null)
                     {
                         var prevPhysicsBody = prevPlayer.GetComponent<PhysicsBodyComponent>();
@@ -704,10 +736,11 @@ public partial class RootLoop : Node3D
                             GD.Print($"[Network] Cleared physics body reference from local player");
                         }
                     }
-                    
+
                     if (prevPlayer != null)
                         root.SelectedWorld?.RemoveElement(prevPlayer);
-                    var existing = root.Worlds.Find(w => w.WorldName == received.WorldName);
+
+                    var existing = root.Worlds.Find(w => w.WorldName == serverWorldName);
                     if (existing != null)
                     {
                         existing.ReplaceFrom(received);
@@ -732,7 +765,7 @@ public partial class RootLoop : Node3D
                         }
                     }
                     root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(existing);
-                    GD.Print($"[Network] WorldSync applied: '{existing.WorldName}' ({existing.Root.Count} root elements)");
+                    GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({existing.Root.Count} root elements). Local world '{_localWorldName}' preserved.");
                     break;
 
                 case MessageType.WorldArchive:
