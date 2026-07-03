@@ -6,8 +6,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using System.Threading;
+using NumQuaternion = System.Numerics.Quaternion;
 using V12.Basic.Components;
 using V12.Components;
 using V12.Components.Renderables;
@@ -33,7 +35,7 @@ public partial class RootLoop : Node3D
     NetworkInspector _networkInspector;
     WorldInspector _worldInspector;
 	readonly Dictionary<JoyButton, bool> _prevJoyButtons = new();
-	Vector2 _mouseLook;
+	Godot.Vector2 _mouseLook;
 	float _mouseSensitivity = 0.002f;
 	bool _mouseCaptured;
 	XRTrackingService _xr;
@@ -57,6 +59,15 @@ public partial class RootLoop : Node3D
     private ConcurrentQueue<MessageDTO> _pendingNetworkMessages = new();
     private bool _debugMode = false;
     private bool _f8WasPressed = false;
+
+    // ── Remote player tweening ──
+    private record RemoteTweenState(
+        System.Numerics.Vector3 VisualPosition,
+        NumQuaternion VisualRotation,
+        System.Numerics.Vector3 TargetPosition,
+        NumQuaternion TargetRotation);
+    private readonly Dictionary<long, RemoteTweenState> _remoteTweens = new();
+    private const float TweenSpeed = 12f; // Higher = faster snap to target
 
     public override void _Input(Godot.InputEvent @event)
     {
@@ -282,7 +293,7 @@ public partial class RootLoop : Node3D
 			float stickRY = Input.GetJoyAxis(0, JoyAxis.RightY);
 
             // ── Mouse look (sent as delta to worker thread via PlayerComponent) ──
-            if (_xr?.IsAvailable != true && _mouseCaptured && _mouseLook != Vector2.Zero)
+            if (_xr?.IsAvailable != true && _mouseCaptured && _mouseLook != Godot.Vector2.Zero)
             {
                 var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
                 if (player != null)
@@ -291,7 +302,7 @@ public partial class RootLoop : Node3D
                     if (pc != null)
                         pc.AddMouseDelta(_mouseLook.X, _mouseLook.Y);
                 }
-                _mouseLook = Vector2.Zero;
+                _mouseLook = Godot.Vector2.Zero;
             }
 
             const float deadzone = 0.15f;
@@ -458,14 +469,56 @@ public partial class RootLoop : Node3D
             if (_debugMode) GD.Print($"[Network] ⏰ PlayerSync timer fired, sending data...");
             SendPlayerDataToServer();
         }
+
+        // ── Tween remote players ──
+        if (_remoteTweens.Count > 0)
+        {
+            float t = 1f - MathF.Exp(-TweenSpeed * (float)delta); // Exponential decay factor
+            var toRemove = new List<long>();
+
+            foreach (var kvp in _remoteTweens)
+            {
+                long playerId = kvp.Key;
+                RemoteTweenState state = kvp.Value;
+
+                // Interpolate position (fully qualify Numerics types to avoid Godot.Vector3 ambiguity)
+                var newVisPos = System.Numerics.Vector3.Lerp(
+                    new System.Numerics.Vector3(state.VisualPosition.X, state.VisualPosition.Y, state.VisualPosition.Z),
+                    new System.Numerics.Vector3(state.TargetPosition.X, state.TargetPosition.Y, state.TargetPosition.Z),
+                    t);
+
+                // Interpolate rotation using quaternion slerp
+                var newVisRot = System.Numerics.Quaternion.Slerp(state.VisualRotation, state.TargetRotation, t);
+
+                // Find the remote player element and update its transform
+                var remoteName = $"RemotePlayer_{playerId}";
+                var remote = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remoteName);
+                if (remote != null)
+                {
+                    remote.LocalTransform = new TRS
+                    {
+                        Position = new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
+                        Rotation = newVisRot,
+                        Scale = System.Numerics.Vector3.One
+                    };
+                }
+
+                // Update stored state
+                _remoteTweens[playerId] = new RemoteTweenState(
+                    new System.Numerics.Vector3(newVisPos.X, newVisPos.Y, newVisPos.Z),
+                    newVisRot,
+                    state.TargetPosition,
+                    state.TargetRotation);
+            }
+        }
     }
 
     private void UpdateLaser()
     {
         if (_pickup == null || !_pickup.HasRay) return;
 
-        var origin = new Vector3(_pickup.RayOrigin.X, _pickup.RayOrigin.Y, _pickup.RayOrigin.Z);
-        var hit = new Vector3(_pickup.RayHitPoint.X, _pickup.RayHitPoint.Y, _pickup.RayHitPoint.Z);
+        var origin = new Godot.Vector3(_pickup.RayOrigin.X, _pickup.RayOrigin.Y, _pickup.RayOrigin.Z);
+        var hit = new Godot.Vector3(_pickup.RayHitPoint.X, _pickup.RayHitPoint.Y, _pickup.RayHitPoint.Z);
 
         // ── Laser line ──
         var im = _laserLine.Mesh as ImmediateMesh;
@@ -843,6 +896,8 @@ public partial class RootLoop : Node3D
                             if (_debugMode) GD.Print($"[Network]   ✅ Added to world. World now has {root.SelectedWorld?.Root.Count ?? 0} root elements");
 
                             root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackElement(remotePlayer);
+                            // Initialise tween state so interpolation starts from the correct position
+                            _remoteTweens[playerSync.PlayerId] = new RemoteTweenState(playerSync.Position, playerSync.Rotation, playerSync.Position, playerSync.Rotation);
                             if (_debugMode) GD.Print($"[Network] ✅ Remote player '{remotePlayerName}' created successfully");
 
                             // Debug: list all root elements
@@ -858,14 +913,22 @@ public partial class RootLoop : Node3D
                         else
                         {
                             if (_debugMode) GD.Print($"[Network] 🔄 Updating existing remote player '{remotePlayerName}'...");
-                            // Update existing remote player
-                            remotePlayer.LocalTransform = new TRS
+                            // Update the tween target; visual position will interpolate toward it each frame.
+                            var targetPos = playerSync.Position;
+                            var targetRot = playerSync.Rotation;
+
+                            if (!_remoteTweens.TryGetValue(playerSync.PlayerId, out var curTween))
                             {
-                                Position = playerSync.Position,
-                                Rotation = playerSync.Rotation,
-                                Scale = System.Numerics.Vector3.One
-                            };
-                            if (_debugMode) GD.Print($"[Network] ✅ Updated remote player position to ({playerSync.Position.X:F2}, {playerSync.Position.Y:F2}, {playerSync.Position.Z:F2})");
+                                // First update — initialise visual at the same spot as target
+                                _remoteTweens[playerSync.PlayerId] = new RemoteTweenState(targetPos, targetRot, targetPos, targetRot);
+                            }
+                            else
+                            {
+                                // Update target; visual continues from its current interpolated position
+                                _remoteTweens[playerSync.PlayerId] = curTween with { TargetPosition = targetPos, TargetRotation = targetRot };
+                            }
+
+                            if (_debugMode) GD.Print($"[Network] ✅ Set tween target ({targetPos.X:F2}, {targetPos.Y:F2}, {targetPos.Z:F2})");
                         }
                     }
                     catch (Exception ex)
@@ -894,6 +957,9 @@ public partial class RootLoop : Node3D
                         {
                             if (_debugMode) GD.Print($"[Network] ⚠ Remote player '{remotePlayerName}' not found (already removed?)");
                         }
+
+                        // Clean up tween state for this player
+                        _remoteTweens.Remove(leaveDto.PlayerId);
                     }
                     catch (Exception ex)
                     {

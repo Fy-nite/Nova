@@ -60,9 +60,9 @@ namespace V12TwoDog
                     {
                         if (ImGui.Button("Connect"))
                         {
-                            // Always use the existing client created by SetupNetworking.
-                            // The host/port fields in the UI are informational only.
-                            _ = client.ConnectAsync();
+                            // Use the existing client created by SetupNetworking,
+                            // but connect to the host/port specified in the UI fields.
+                            _ = client.ConnectAsync(_host, _port);
                         }
                     }
                 }
