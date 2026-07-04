@@ -20,7 +20,7 @@ obj/
 .vs/
 .vscode/
 .idea/
-
+build/
 # Godot-specific ignores
 .godot/
 .import/
