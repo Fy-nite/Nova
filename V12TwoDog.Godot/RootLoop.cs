@@ -171,7 +171,7 @@ public partial class RootLoop : Node3D
                     }
                 }
 
-                // If a server world was active, switch back to the local world
+                // Switch back to the local world — PersistentWorld (Player, camera) stays intact
                 if (_localWorldName != null)
                 {
                     var localWorld = root.Worlds.Find(w => w.WorldName == _localWorldName);
@@ -179,8 +179,6 @@ public partial class RootLoop : Node3D
                     {
                         root.SelectWorld(localWorld);
                         GD.Print($"[Network] 🔄 Switched back to local world '{_localWorldName}'");
-                        // Track the local world so the renderer picks it up
-                        root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(localWorld);
                     }
                 }
 
@@ -322,7 +320,7 @@ public partial class RootLoop : Node3D
             // ── Mouse look (sent as delta to worker thread via PlayerComponent) ──
             if (_xr?.IsAvailable != true && _mouseCaptured && _mouseLook != Godot.Vector2.Zero)
             {
-                var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+                var player = root.Player;
                 if (player != null)
                 {
                     var pc = player.GetComponent<PlayerComponent>();
@@ -588,10 +586,10 @@ public partial class RootLoop : Node3D
 
     private void SendPlayerDataToServer()
     {
-        var player = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+        var player = root.Player;
         if (player == null)
         {
-            if (_debugMode) GD.PrintErr("[Network] ❌ No local player found to send to server");
+            if (_debugMode) GD.PrintErr("[Network] ❌ No local Player found in PersistentWorld to send to server");
             return;
         }
 
@@ -719,26 +717,20 @@ public partial class RootLoop : Node3D
             {
                 case MessageType.WorldSync:
                     var received = AncientCompressor.Decompress<World>(message.Message);
-                    var prevPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
-                    var prevCamera = prevPlayer?.Children?.FirstOrDefault(e => e.Name == "PlayerCamera3D");
 
                     // Preserve the local world by naming the server world differently
                     var serverWorldName = $"Server_{received.WorldName}";
                     received.WorldName = serverWorldName;
 
-                    // Clear physics body references before removing player from current world
-                    if (prevPlayer != null)
+                    // Remove old physics body references from the previous server world
+                    if (root.SelectedWorld != null)
                     {
-                        var prevPhysicsBody = prevPlayer.GetComponent<PhysicsBodyComponent>();
-                        if (prevPhysicsBody != null)
+                        foreach (var el in root.SelectedWorld.Root)
                         {
-                            prevPhysicsBody.Body = null;
-                            GD.Print($"[Network] Cleared physics body reference from local player");
+                            var pbc = el.GetComponent<PhysicsBodyComponent>();
+                            if (pbc != null) pbc.Body = null;
                         }
                     }
-
-                    if (prevPlayer != null)
-                        root.SelectedWorld?.RemoveElement(prevPlayer);
 
                     var existing = root.Worlds.Find(w => w.WorldName == serverWorldName);
                     if (existing != null)
@@ -751,21 +743,7 @@ public partial class RootLoop : Node3D
                         existing = received;
                     }
                     root.SelectWorld(existing);
-                    if (prevPlayer != null && !existing.Root.Any(e => e.Name == "Player"))
-                    {
-                        existing.AddElement(prevPlayer);
-                        GD.Print($"[Network] Re-added local player with {prevPlayer.Children.Count} children");
-                        if (prevCamera != null)
-                        {
-                            GD.Print($"[Network] Camera preserved as child of player");
-                        }
-                        else
-                        {
-                            GD.PrintErr($"[Network] WARNING: Camera was not found as child of player!");
-                        }
-                    }
-                    root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackWorld(existing);
-                    GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({existing.Root.Count} root elements). Local world '{_localWorldName}' preserved.");
+                    GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({existing.Root.Count} root elements). PersistentWorld (Player) untouched.");
                     break;
 
                 case MessageType.WorldArchive:
@@ -855,7 +833,7 @@ public partial class RootLoop : Node3D
                         }
 
                         // Check if this is our own player (ignore it)
-                        var localPlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == "Player");
+                        var localPlayer = root.Player;
                         if (localPlayer != null && localPlayer.Id == playerSync.PlayerId)
                         {
                             if (_debugMode) GD.Print($"[Network] ⏭ Ignoring own player sync (localPlayer.Id={localPlayer.Id} == sync.PlayerId={playerSync.PlayerId})");

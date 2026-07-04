@@ -95,12 +95,29 @@ namespace V12TwoDog
             var world = GameRoot.Instance?.SelectedWorld;
             if (world == null) return;
 
-            foreach (var element in world.Root)
+            // Player lives in PersistentWorld — search there first, fall back to selected world
+            var persistentWorld = GameRoot.Instance?.PersistentWorld;
+            if (persistentWorld != null)
             {
-                if (element.Name == "Player")
+                foreach (var element in persistentWorld.Root)
                 {
-                    _cachedPlayer = element;
-                    break;
+                    if (element.Name == "Player")
+                    {
+                        _cachedPlayer = element;
+                        break;
+                    }
+                }
+            }
+
+            if (_cachedPlayer == null)
+            {
+                foreach (var element in world.Root)
+                {
+                    if (element.Name == "Player")
+                    {
+                        _cachedPlayer = element;
+                        break;
+                    }
                 }
             }
 

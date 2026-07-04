@@ -367,7 +367,7 @@ const _EDITOR_PREVIEW_PORTAL_MATERIAL: StandardMaterial3D = preload("uid://dcfkc
 
 # _ready(), but only in editor.
 func _editor_ready() -> void:
-	add_to_group(PortalSettings.get_setting("portals_group_name"), true)
+	#add_to_group(PortalSettings.get_setting("portals_group_name"), true)
 	set_notify_transform(true)
 	
 	process_priority = 100
@@ -429,8 +429,8 @@ func _on_portal_size_changed() -> void:
 		push_error("Failed to update portal size, portal has no mesh")
 		return
 	
-	var p: PortalBoxMesh = portal_mesh.mesh
-	p.size = Vector3(portal_size.x, portal_size.y, 1)
+	#var p: PortalBoxMesh = portal_mesh. mesh
+	#p.size = Vector3(portal_size.x, portal_size.y, 1)
 	portal_mesh.scale.z = _portal_thickness
 	
 	if is_teleport and teleport_collider:

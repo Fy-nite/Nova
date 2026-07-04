@@ -121,7 +121,7 @@ namespace V12TwoDog
                 }
 
                 // Ensure the player has an Area3D for portal teleport detection
-                var playerElement = FindPlayer(world);
+                var playerElement = FindPlayer(_gameRoot.PersistentWorld);
                 if (playerElement != null && _portalNodes.Count > 0)
                     EnsurePlayerArea(playerElement);
             }
@@ -224,7 +224,7 @@ namespace V12TwoDog
 
         private void ManualTeleportCheck(World world)
         {
-            var playerElement = FindPlayer(world);
+            var playerElement = FindPlayer(_gameRoot.PersistentWorld);
             if (playerElement == null || _portalNodes.Count == 0) return;
 
             var curPos = playerElement.LocalTransform.Position;
