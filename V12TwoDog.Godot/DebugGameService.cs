@@ -89,53 +89,54 @@ namespace V12TwoDog
                 }
             }
 
-            // Gather component details from the selected world in GameRoot
+            // Gather component details from all active worlds
             var infoLines = new List<string>();
-            if (_gameRoot.SelectedWorld != null)
+
+            void Traverse(IWorldElement element, string indent)
             {
-                infoLines.Add($"World: {_gameRoot.SelectedWorld.WorldName}");
+                if (element == null) return;
 
-                void Traverse(IWorldElement element, string indent)
+                infoLines.Add($"{indent}Element: {element.Name} (ID: {element.Id})");
+                foreach (var comp in element.Components)
                 {
-                    if (element == null) return;
-                    
-                    infoLines.Add($"{indent}Element: {element.Name} (ID: {element.Id})");
-                    foreach (var comp in element.Components)
-                    {
-                        bool active = comp is ComponentBase cb ? cb.Active : true;
-                        infoLines.Add($"{indent}  - Component: {comp.GetType().Name} (Name: {comp.Name}, Active: {active})");
+                    bool active = comp is ComponentBase cb ? cb.Active : true;
+                    infoLines.Add($"{indent}  - Component: {comp.GetType().Name} (Name: {comp.Name}, Active: {active})");
 
-                        if (comp is TransformComponent tc)
-                        {
-                            infoLines.Add($"{indent}      Pos=({tc.X:F2},{tc.Y:F2},{tc.Z:F2}) RotX={tc.RotationX?.ToString("F2")??"null"} RotY={tc.RotationY?.ToString("F2")??"null"} RotZ={tc.RotationZ?.ToString("F2")??"null"} RY={tc.RY:F4}");
-                        }
-                        else if (comp is LocomotionComponent lc)
-                        {
-                            infoLines.Add($"{indent}      Vel=({lc.Velocity.X:F4},{lc.Velocity.Y:F4},{lc.Velocity.Z:F4}) Grounded={lc.IsGrounded} CanJump={lc.CanJump}");
-                        }
-                        else if (comp is PhysicsBodyComponent pbc)
-                        {
-                            infoLines.Add($"{indent}      Body={(pbc.Body != null ? "set" : "null")} IsKinematic={pbc.IsKinematic}");
-                        }
+                    if (comp is TransformComponent tc)
+                    {
+                        infoLines.Add($"{indent}      Pos=({tc.X:F2},{tc.Y:F2},{tc.Z:F2}) RotX={tc.RotationX?.ToString("F2")??"null"} RotY={tc.RotationY?.ToString("F2")??"null"} RotZ={tc.RotationZ?.ToString("F2")??"null"} RY={tc.RY:F4}");
                     }
-
-                    if (element.Children != null)
+                    else if (comp is LocomotionComponent lc)
                     {
-                        foreach (var child in element.Children)
-                        {
-                            Traverse(child, indent + "    ");
-                        }
+                        infoLines.Add($"{indent}      Vel=({lc.Velocity.X:F4},{lc.Velocity.Y:F4},{lc.Velocity.Z:F4}) Grounded={lc.IsGrounded} CanJump={lc.CanJump}");
+                    }
+                    else if (comp is PhysicsBodyComponent pbc)
+                    {
+                        infoLines.Add($"{indent}      Body={(pbc.Body != null ? "set" : "null")} IsKinematic={pbc.IsKinematic}");
                     }
                 }
 
-                foreach (var element in _gameRoot.SelectedWorld.Root)
+                if (element.Children != null)
+                {
+                    foreach (var child in element.Children)
+                    {
+                        Traverse(child, indent + "    ");
+                    }
+                }
+            }
+
+            foreach (var world in _gameRoot.ActiveWorlds)
+            {
+                infoLines.Add($"World: {world.WorldName}");
+                foreach (var element in world.Root)
                 {
                     Traverse(element, "  ");
                 }
             }
-            else
+
+            if (infoLines.Count == 0)
             {
-                infoLines.Add("No Selected World");
+                infoLines.Add("No worlds active");
             }
 
             // Sync the Node3D children under the "debug" slot

@@ -52,10 +52,15 @@ namespace V12TwoDog
                         Collect(child);
             }
 
-            foreach (var root in world.Root.ToArray())
-                Collect(root);
+            // Capture audio from all active worlds (PersistentWorld + SelectedWorld)
+            foreach (var activeWorld in _gameRoot.ActiveWorlds)
+            {
+                foreach (var root in activeWorld.Root.ToArray())
+                    Collect(root);
+            }
 
-            var listenerElement = world.FindElementWithComponentRecursive<IAudioListener>();
+            // Find audio listener across all active worlds
+            var listenerElement = _gameRoot.FindElementWithComponent<IAudioListener>();
             if (listenerElement != null)
             {
                 var listenerComp = listenerElement.GetComponent<IAudioListener>();
@@ -78,6 +83,15 @@ namespace V12TwoDog
 
             // ── Reparent listener to the active camera so it follows the head ──
             var cam = GetViewport()?.GetCamera3D();
+
+            // The listener node may have been disposed during scene cleanup (e.g. when
+            // fake players are spawned / worlds are swapped). Recreate it if needed.
+            if (!GodotObject.IsInstanceValid(_listener))
+            {
+                _listener = new AudioListener3D();
+                AddChild(_listener);
+            }
+
             if (cam != null && _listener.GetParent() != cam)
                 _listener.Reparent(cam);
 

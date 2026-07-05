@@ -501,8 +501,8 @@
 		<Component type="MeshRenderer" Mesh="mesh_data" />
 		<MaterialComponent R="0.458" G="0.458" B="0.458" A="1.000" Metallic="0.000" Roughness="1.000" AlbedoTexture="v12://hotreload/prototype_textures/textures/blue_texture.png" Uv1OffsetX="0.000" Uv1OffsetY="-0.190" />
 	</Element>
-	<Element name="SpotLight3D">
-		<TransformComponent x="-4.418" y="6.259" z="-4.395" rotation="0.000" rotationX="-60.896" rotationY="0.000" rotationZ="0.000" />
-		<GenericLightComponent Type="Spot" colorR="1.000" colorG="1.000" colorB="1.000" range="156.012" energy="1.000" angle="45.00" spotSoftness="1.000" shadowEnabled="False" />
+	<Element name="DirectionalLight3D">
+		<TransformComponent x="0.000" y="0.000" z="0.000" rotation="2.191" rotationX="-39.881" rotationY="2.191" rotationZ="-4.437" />
+		<GenericLightComponent colorR="1.000" colorG="1.000" colorB="1.000" energy="1.000" shadowEnabled="False" />
 	</Element>
 </World>

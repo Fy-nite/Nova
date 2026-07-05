@@ -41,7 +41,7 @@ public partial class RootLoop : Node3D
 	XRTrackingService _xr;
     GodotPhysicsBackend _godotPhysics;
     private V12.Core.Systems.PickupSystem _pickup;
-    private PortalBinding _portalBinding;
+    // private PortalBinding _portalBinding;
 
     // ── Laser visual ──
     private MeshInstance3D _laserLine;
@@ -158,17 +158,13 @@ public partial class RootLoop : Node3D
             networkClient.OnDisconnected += () =>
             {
                 GD.Print("[Network] ❌ Disconnected from server");
-                // Clean up all remote players
-                if (root.SelectedWorld != null)
+                // Clean up all remote players (search all active worlds via query API)
+                var remotePlayers = root.FindElements(e => e.Name != null && e.Name.StartsWith("RemotePlayer_"));
+                foreach (var rp in remotePlayers)
                 {
-                    var remotePlayers = root.SelectedWorld.Root
-                        .Where(e => e.Name != null && e.Name.StartsWith("RemotePlayer_"))
-                        .ToList();
-                    foreach (var rp in remotePlayers)
-                    {
-                        root.SelectedWorld.RemoveElement(rp);
-                        GD.Print($"[Network] 🧹 Removed remote player '{rp.Name}'");
-                    }
+                    var world = root.GetWorldForElement(rp);
+                    world?.RemoveElement(rp);
+                    GD.Print($"[Network] 🧹 Removed remote player '{rp.Name}'");
                 }
 
                 // Switch back to the local world — PersistentWorld (Player, camera) stays intact
@@ -214,9 +210,9 @@ public partial class RootLoop : Node3D
         _pickup?.Initialize(root);
 
         // ── Portal binding ──
-        _portalBinding = new PortalBinding();
-        _portalBinding.Initialize(root);
-        AddChild(_portalBinding);
+        // _portalBinding = new PortalBinding();
+        // _portalBinding.Initialize(root);
+        // AddChild(_portalBinding);
 
         // ── Laser visual ──
         _laserLine = new MeshInstance3D();
@@ -287,7 +283,7 @@ public partial class RootLoop : Node3D
         }
     }
 
-	public override void _Process(double delta)
+	public override void _PhysicsProcess(double delta)
 	{
         // ── Update XR tracking and input ──
         _xr?.Update();
@@ -412,7 +408,7 @@ public partial class RootLoop : Node3D
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_up", Value = 1f });
 			if (Input.IsActionPressed("fly_down"))
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.Axis, Name = "fly_down", Value = 1f });
-
+ 
 			// ── Controller button events ──
 			var currentJoy = new Dictionary<JoyButton, bool>();
 			for (int i = 0; i < (int)JoyButton.Max; i++)
@@ -472,7 +468,7 @@ public partial class RootLoop : Node3D
                 var newVisRot = System.Numerics.Quaternion.Slerp(state.VisualRotation, state.TargetRotation, t);
 
                 var remoteName = $"RemotePlayer_{playerId}";
-                var remote = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remoteName);
+                var remote = root.FindElement(e => e.Name == remoteName);
                 if (remote != null)
                 {
                     remote.LocalTransform = new TRS
@@ -501,7 +497,7 @@ public partial class RootLoop : Node3D
             audioPlayer.ApplySnapshot(_latestFrame);
         }
 
-        _portalBinding?.Update();
+        // _portalBinding?.Update();
         debug.Update((float)delta);
         
         // ── Periodic status logging ──
@@ -844,7 +840,7 @@ public partial class RootLoop : Node3D
 
                         // Create or update remote player
                         var remotePlayerName = $"RemotePlayer_{playerSync.PlayerId}";
-                        var remotePlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remotePlayerName);
+                        var remotePlayer = root.FindElement(e => e.Name == remotePlayerName);
 
                         if (_debugMode) GD.Print($"[Network] 🔍 Looking for existing remote player '{remotePlayerName}': {(remotePlayer != null ? "FOUND" : "NOT FOUND")}");
 
@@ -974,10 +970,11 @@ public partial class RootLoop : Node3D
                         GD.Print($"[Network] 📴 PlayerLeave received for PlayerId: {leaveDto.PlayerId}");
 
                         var remotePlayerName = $"RemotePlayer_{leaveDto.PlayerId}";
-                        var remotePlayer = root.SelectedWorld?.Root?.FirstOrDefault(e => e.Name == remotePlayerName);
+                        var remotePlayer = root.FindElement(e => e.Name == remotePlayerName);
                         if (remotePlayer != null)
                         {
-                            root.SelectedWorld?.RemoveElement(remotePlayer);
+                            var world = root.GetWorldForElement(remotePlayer);
+                            world?.RemoveElement(remotePlayer);
                             GD.Print($"[Network] ✅ Removed remote player '{remotePlayerName}' from world");
                         }
                         else
@@ -1003,9 +1000,6 @@ public partial class RootLoop : Node3D
 
                     lock (root)
                     {
-                        var world = root.SelectedWorld;
-                        if (world == null) break;
-
                         foreach (var snapshot in batch.Components)
                         {
                             if (snapshot.Payload == null || snapshot.Payload.Length == 0) continue;
@@ -1015,17 +1009,24 @@ public partial class RootLoop : Node3D
                                 var incoming = AncientCompressor.DecompressComponent(csDto);
                                 if (incoming == null) continue;
 
-                                foreach (var element in world.Root)
+                                // Search all active worlds for a component matching this ID
+                                bool found = false;
+                                foreach (var w in root.ActiveWorlds)
                                 {
-                                    var target = element.Components.Find(c => c.Id == snapshot.Id);
-                                    if (target == null) continue;
-                                    foreach (var prop in incoming.GetType()
-                                        .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                                    foreach (var element in w.Root)
                                     {
-                                        if (prop.Name == "Id" || !prop.CanRead || !prop.CanWrite) continue;
-                                        try { prop.SetValue(target, prop.GetValue(incoming)); } catch { }
+                                        var target = element.Components.Find(c => c.Id == snapshot.Id);
+                                        if (target == null) continue;
+                                        foreach (var prop in incoming.GetType()
+                                            .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                                        {
+                                            if (prop.Name == "Id" || !prop.CanRead || !prop.CanWrite) continue;
+                                            try { prop.SetValue(target, prop.GetValue(incoming)); } catch { }
+                                        }
+                                        found = true;
+                                        break;
                                     }
-                                    break;
+                                    if (found) break;
                                 }
                             }
                             catch { }
@@ -1044,7 +1045,7 @@ public partial class RootLoop : Node3D
     {
         if (what == NotificationPredelete)
         {
-            _portalBinding?.Cleanup();
+            // _portalBinding?.Cleanup();
             _xr?.Cleanup();
             _cts?.Cancel();
             _v12Thread?.Join(1000);

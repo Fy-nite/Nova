@@ -92,34 +92,8 @@ namespace V12TwoDog
             _cachedLeftHand = null;
             _cachedRightHand = null;
 
-            var world = GameRoot.Instance?.SelectedWorld;
-            if (world == null) return;
-
-            // Player lives in PersistentWorld — search there first, fall back to selected world
-            var persistentWorld = GameRoot.Instance?.PersistentWorld;
-            if (persistentWorld != null)
-            {
-                foreach (var element in persistentWorld.Root)
-                {
-                    if (element.Name == "Player")
-                    {
-                        _cachedPlayer = element;
-                        break;
-                    }
-                }
-            }
-
-            if (_cachedPlayer == null)
-            {
-                foreach (var element in world.Root)
-                {
-                    if (element.Name == "Player")
-                    {
-                        _cachedPlayer = element;
-                        break;
-                    }
-                }
-            }
+            // Use ECS query API — searches all active worlds (PersistentWorld + SelectedWorld)
+            _cachedPlayer = GameRoot.Instance?.FindElement(e => e.Name == "Player");
 
             if (_cachedPlayer == null) return;
 
