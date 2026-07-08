@@ -1009,25 +1009,8 @@ public partial class RootLoop : Node3D
                                 var incoming = AncientCompressor.DecompressComponent(csDto);
                                 if (incoming == null) continue;
 
-                                // Search all active worlds for a component matching this ID
-                                bool found = false;
-                                foreach (var w in root.ActiveWorlds)
-                                {
-                                    foreach (var element in w.Root)
-                                    {
-                                        var target = element.Components.Find(c => c.Id == snapshot.Id);
-                                        if (target == null) continue;
-                                        foreach (var prop in incoming.GetType()
-                                            .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
-                                        {
-                                            if (prop.Name == "Id" || !prop.CanRead || !prop.CanWrite) continue;
-                                            try { prop.SetValue(target, prop.GetValue(incoming)); } catch { }
-                                        }
-                                        found = true;
-                                        break;
-                                    }
-                                    if (found) break;
-                                }
+                                // Search all active worlds for a component matching this ID (recursive)
+                                ApplyComponentUpdateRecursive(incoming, snapshot.Id);
                             }
                             catch { }
                         }
@@ -1039,6 +1022,52 @@ public partial class RootLoop : Node3D
         {
             GD.Print($"[Network] Error handling {message.MessageType}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Recursively search the world tree for a component matching the given ID,
+    /// and copy public writable properties from the incoming component to the target.
+    /// </summary>
+    private void ApplyComponentUpdateRecursive(IComponent incoming, long targetId)
+    {
+        bool found = false;
+        foreach (var w in root.ActiveWorlds)
+        {
+            foreach (var element in w.Root)
+            {
+                if (TryApplyToElement(element, incoming, targetId))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+
+    private static bool TryApplyToElement(IWorldElement element, IComponent incoming, long targetId)
+    {
+        // Check this element's components
+        var target = element.Components.Find(c => c.Id == targetId);
+        if (target != null)
+        {
+            foreach (var prop in incoming.GetType()
+                .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                if (prop.Name == "Id" || !prop.CanRead || !prop.CanWrite) continue;
+                try { prop.SetValue(target, prop.GetValue(incoming)); } catch { }
+            }
+            return true;
+        }
+
+        // Recurse into children
+        foreach (var child in element.Children)
+        {
+            if (TryApplyToElement(child, incoming, targetId))
+                return true;
+        }
+
+        return false;
     }
 
     public override void _Notification(int what)

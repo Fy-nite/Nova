@@ -66,7 +66,7 @@ use_collision = true
 size = Vector3(7.9, 2, 0.12646484)
 
 [node name="CSGBakedMeshInstance3D2" type="MeshInstance3D" parent="." unique_id=222348267]
-transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -4, 0, -16.652365)
+transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, -4, 4.4, -16.652365)
 mesh = SubResource("ArrayMesh_cvuku")
 
 [node name="Node3D" type="Node3D" parent="." unique_id=1272538464]
@@ -79,8 +79,3 @@ mesh = SubResource("ArrayMesh_72rlg")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1773828677]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, -0.25, -14.549999)
 shape = SubResource("ConcavePolygonShape3D_cvuku")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=950098532]
-transform = Transform3D(0.99817044, 0.052868646, 0.029337257, -0.059368122, 0.76507586, 0.64119756, 0.0114540225, -0.6417662, 0.7668148, 0, 0, 0)
-light_indirect_energy = 1.133
-light_specular = 0.067
