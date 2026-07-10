@@ -1,7 +1,7 @@
 using Godot;
 using V12.Core;
 using Engine = twodog.Engine;
-// i got that dawg in me yo, woof woof bitch
+// i got that dawg in me yo
 public class Program
 {
     public static void Main(string[] args)
