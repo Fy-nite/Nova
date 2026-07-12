@@ -10,8 +10,8 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\V12.SampleGame\V12.SampleGame.csproj" />
     <ProjectReference Include="..\..\V12\V12.csproj" />
+    <ProjectReference Include="..\..\V12.Basic\V12.Basic.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\" />

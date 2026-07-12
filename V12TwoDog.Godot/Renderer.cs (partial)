@@ -1,0 +1,37 @@
+using V12.Rendering;
+using V12TwoDog.Godot.Rendering;
+
+public partial class Renderer : Node
+{
+    private IRenderTarget _currentTarget;
+    private SubViewport _targetViewport;
+
+    /// <summary>
+    /// Sets the render target where frames will be drawn.
+    /// </summary>
+    public void SetOutputTarget(IRenderTarget target)
+    {
+        if (target is RenderTargetGodot godotTarget)
+        {
+            _currentTarget = target;
+            _targetViewport = godotTarget.SubViewport;
+            // The rendering pipeline should now draw into _targetViewport
+        }
+        else
+        {
+            throw new ArgumentException("Unsupported render target type");
+        }
+    }
+
+    // Then in your existing render loop, instead of drawing to the default
+    // viewport, you draw to _targetViewport.RenderTarget (or use its RID).
+    // For example:
+    public void RenderFrame()
+    {
+        if (_targetViewport == null)
+            return;
+
+        // ... your existing rendering commands ...
+        // Make sure they target _targetViewport.GetFinalRect() or its RenderTarget.
+    }
+}

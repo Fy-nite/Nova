@@ -1,5 +1,5 @@
 using Godot;
-using Microsoft.Win32;
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using NumQuaternion = System.Numerics.Quaternion;
+using V12;
 using V12.Basic.Components;
 using V12.Components;
 using V12.Components.Renderables;
@@ -21,15 +22,18 @@ using V12.Core.Interfaces.Renderer;
 using V12.Core.NetworkCable;
 using V12.Core.Networking;
 using V12.Core.Rendering;
-using V12.SampleGame;
 using V12.WorldML;
+using V12.Rendering;
+using V12.UI;
+using V12.Core.GamePak;
 using V12TwoDog;
+using V12TwoDog.Godot.Rendering;
+using V12TwoDog.Godot.UI;
 
 public partial class RootLoop : Node3D
 {
 	GameRoot root;
     IRenderer renderer;
-    IGameService Bootstrap;
     GodotAudioPlayer audioPlayer;
     DebugGameService debug;
     NetworkInspector _networkInspector;
@@ -41,6 +45,8 @@ public partial class RootLoop : Node3D
 	XRTrackingService _xr;
     GodotPhysicsBackend _godotPhysics;
     private V12.Core.Systems.PickupSystem _pickup;
+    private GamepakLauncher _launcher;
+    private bool _gamepakMode;
     // private PortalBinding _portalBinding;
 
     // ── Laser visual ──
@@ -99,14 +105,19 @@ public partial class RootLoop : Node3D
 		Console.SetOut(new GodotConsoleWriter());
 		root = new GameRoot();
 		renderer = new V12TwoDog.Renderer(GetTree());
-        Bootstrap = new Bootstrap();
 
-        root.Registry.Register("Bootstrap", Bootstrap);
         audioPlayer = new GodotAudioPlayer();
         audioPlayer.Initialize(root);
         root.Registry.Register("IAudioPlayer", audioPlayer);
         AddChild(audioPlayer);
         root.Registry.Register("IRenderer", renderer);
+
+        var renderTargetFactory = new GodotRenderTargetFactory();
+        root.Registry.Register(nameof(IRenderTargetFactory), renderTargetFactory);
+
+        var uiProvider = new GodotUIProvider();
+        root.Registry.Register(nameof(IUIProvider), uiProvider);
+
         var _input = root.Registry.Get<InputService>();
         if (_input == null )
         {
@@ -137,8 +148,60 @@ public partial class RootLoop : Node3D
         _godotPhysics = new V12TwoDog.GodotPhysicsBackend(GetTree().Root.World3D);
         root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _godotPhysics);
 
-        root.CreateWorld("TestWorld");
-        _localWorldName = root.SelectedWorld?.WorldName;
+        // ── Discover game paks ──
+        root.LoadGamepacks("gamepaks");
+
+        // ── Parse --gamepak CLI arg ──
+        string gamepakName = null;
+        foreach (var arg in OS.GetCmdlineArgs())
+        {
+            if (arg.StartsWith("--gamepak="))
+            {
+                gamepakName = arg.Substring("--gamepak=".Length);
+                break;
+            }
+        }
+
+        // ── Game pak mode: load a specific pak or show launcher ──
+        IV12Gamepack selectedPak = null;
+        if (gamepakName != null)
+        {
+            // --gamepak was specified: load it directly
+            selectedPak = root.Gamepaks.FindByName(gamepakName);
+            if (selectedPak != null)
+            {
+                GD.Print($"[RootLoop] --gamepak '{gamepakName}' found, launching...");
+                _gamepakMode = true;
+                selectedPak.OnStart();
+                _afterGamepakStart();
+            }
+            else
+            {
+                GD.PrintErr($"[RootLoop] --gamepak '{gamepakName}' not found in gamepaks/.");
+            }
+        }
+        else if (root.Gamepaks.Gamepaks.Count > 0)
+        {
+            // Game paks exist but none specified: show launcher
+            _gamepakMode = true;
+            _launcher = new GamepakLauncher(root, root.Gamepaks);
+            _launcher.OnLaunch += (pak) =>
+            {
+                GD.Print($"[RootLoop] Launcher: launching '{pak.Name}'...");
+                pak.OnStart();
+                _afterGamepakStart();
+            };
+            ImGui.OnLayout(_launcher.OnLayout);
+            GD.Print($"[RootLoop] {root.Gamepaks.Gamepaks.Count} game pak(s) found. Launcher shown.");
+        }
+
+        // ── No game pak mode: empty renderer ──
+        if (!_gamepakMode)
+        {
+            GD.Print("[RootLoop] No game paks found. Place .dll files in 'gamepaks/' or use --gamepak=<name>.");
+            root.CreateWorld("Empty");
+            _localWorldName = root.SelectedWorld?.WorldName;
+        }
 
         // ── Multiplayer client ─────────────────────────────────────────
         // Connects to a headless server at 127.0.0.1:7777. The server's
@@ -203,19 +266,9 @@ public partial class RootLoop : Node3D
 		root.Initialize();
         // Networking is set up but not auto-started. Use Network Inspector UI to connect manually.
 
-        // Initialize physics services
-        root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
-        root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
-        root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
-
-        // ── Pickup system (registered in BasicRegistry, init here) ──
-        _pickup = root.Registry.Get<V12.Core.Systems.PickupSystem>();
-        _pickup?.Initialize(root);
-
-        // ── Portal binding ──
-        // _portalBinding = new PortalBinding();
-        // _portalBinding.Initialize(root);
-        // AddChild(_portalBinding);
+        // ── Post-initialize: physics, pickup, laser ──
+        if (!_gamepakMode)
+            _afterGamepakStart();
 
         // ── Laser visual ──
         _laserLine = new MeshInstance3D();
@@ -1133,67 +1186,27 @@ public partial class RootLoop : Node3D
     }
 
     /// <summary>
-    /// Count all elements in a tree (including root nodes).
+    /// Initialize physics, locomotion, script, and pickup systems.
+    /// Called after a game pak has set up its world.
     /// </summary>
-    private static int CountElementsRecursive(List<IWorldElement> elements)
+    private void _afterGamepakStart()
     {
-        int count = 0;
-        foreach (var el in elements)
+        // ── Attach gamepak root widget to scene tree ──
+        var rootWidget = root.Registry.Get<IWidget>("RootWidget");
+        if (rootWidget?.NativeControl is Node node)
         {
-            count++;
-            if (el.Children != null && el.Children.Count > 0)
-                count += CountElementsRecursive(el.Children);
-        }
-        return count;
-    }
-
-    /// <summary>
-    /// Copy server-authoritative element and component IDs from the BSON-serialized
-    /// server world into the locally-loaded archive world, so future WorldUpdate
-    /// patches match by ID. Elements are matched by name (recursively).
-    /// </summary>
-    private static void SyncElementIds(World serverWorld, World localWorld)
-    {
-        foreach (var serverRoot in serverWorld.Root)
-        {
-            foreach (var localRoot in localWorld.Root)
-            {
-                SyncElementIdsRecursive(serverRoot, localRoot);
-            }
-        }
-    }
-
-    private static void SyncElementIdsRecursive(IWorldElement serverEl, IWorldElement localEl)
-    {
-        if (!string.Equals(serverEl.Name, localEl.Name, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        // Sync element ID
-        localEl.Id = serverEl.Id;
-
-        // Sync component IDs by matching type and name
-        foreach (var serverComp in serverEl.Components)
-        {
-            foreach (var localComp in localEl.Components)
-            {
-                if (localComp.GetType() == serverComp.GetType()
-                    && string.Equals(localComp.Name ?? "", serverComp.Name ?? "", StringComparison.OrdinalIgnoreCase))
-                {
-                    // ComponentBase.Id is now public set; IComponent.Id is get-only so we cast.
-                    if (localComp is ComponentBase cb)
-                        cb.Id = serverComp.Id;
-                }
-            }
+            GD.Print($"[RootLoop] Adding gamepak root widget to scene tree.");
+            AddChild(node);
         }
 
-        // Recurse into children
-        foreach (var serverChild in serverEl.Children)
-        {
-            foreach (var localChild in localEl.Children)
-            {
-                SyncElementIdsRecursive(serverChild, localChild);
-            }
-        }
+        root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
+        root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
+        root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
+
+        _pickup = root.Registry.Get<V12.Core.Systems.PickupSystem>();
+        _pickup?.Initialize(root);
+
+        _localWorldName = root.SelectedWorld?.WorldName;
     }
 
     public override void _Notification(int what)
