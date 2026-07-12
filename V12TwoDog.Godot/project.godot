@@ -18,12 +18,6 @@ run/main_scene="uid://hdjvbjy78ms1"
 config/features=PackedStringArray("4.7", "C#")
 config/icon="uid://c0pjr5qikrm80"
 
-[autoload]
-
-ImGui="*uid://b7gfghxop1jan"
-DebugMenu="*uid://cggqb75a8w8r"
-MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
-
 [display]
 
 window/size/viewport_width=1280

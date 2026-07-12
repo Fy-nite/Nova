@@ -170,6 +170,7 @@ public partial class RootLoop : Node3D
                 GD.Print($"[RootLoop] --gamepak '{gamepakName}' found, launching...");
                 _gamepakMode = true;
                 selectedPak.OnStart();
+                _afterGamepakStart();
             }
             else
             {
@@ -1128,6 +1129,14 @@ public partial class RootLoop : Node3D
     /// </summary>
     private void _afterGamepakStart()
     {
+        // ── Attach gamepak root widget to scene tree ──
+        var rootWidget = root.Registry.Get<IWidget>("RootWidget");
+        if (rootWidget?.NativeControl is Node node)
+        {
+            GD.Print($"[RootLoop] Adding gamepak root widget to scene tree.");
+            AddChild(node);
+        }
+
         root.Registry.Get<V12.Core.Systems.PhysicsLocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.LocomotionSystem>()?.Initialize(root);
         root.Registry.Get<V12.Core.Systems.ScriptSystem>()?.Initialize();
