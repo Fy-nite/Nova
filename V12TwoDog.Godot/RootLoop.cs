@@ -66,6 +66,9 @@ public partial class RootLoop : Node3D
     // ── Multi-world support ──
     private string _localWorldName;
 
+    // ── Archive-loaded world ──
+    private World _loadedArchiveWorld;
+
     // ── Remote player tweening ──
     private record RemoteTweenState(
         System.Numerics.Vector3 VisualPosition,
@@ -716,7 +719,6 @@ public partial class RootLoop : Node3D
 
                     // Preserve the local world by naming the server world differently
                     var serverWorldName = $"Server_{received.WorldName}";
-                    received.WorldName = serverWorldName;
 
                     // Remove old physics body references from the previous server world
                     if (root.SelectedWorld != null)
@@ -728,18 +730,48 @@ public partial class RootLoop : Node3D
                         }
                     }
 
-                    var existing = root.Worlds.Find(w => w.WorldName == serverWorldName);
-                    if (existing != null)
+                    World worldToUse;
+                    if (_loadedArchiveWorld != null)
                     {
-                        existing.ReplaceFrom(received);
+                        // Use the locally-loaded world (has full mesh data from XML)
+                        // and sync server-authoritative IDs so WorldUpdate patches match.
+                        _loadedArchiveWorld.WorldName = serverWorldName;
+                        SyncElementIds(received, _loadedArchiveWorld);
+                        worldToUse = _loadedArchiveWorld;
+                        GD.Print($"[Network] WorldSync: using locally-loaded archive world with synced IDs");
                     }
                     else
                     {
-                        root.Worlds.Add(received);
-                        existing = received;
+                        // Fallback: use BSON-serialized world (no local archive loaded)
+                        received.WorldName = serverWorldName;
+                        worldToUse = received;
+                        GD.Print($"[Network] WorldSync: using BSON world (no local archive available)");
                     }
-                    root.SelectWorld(existing);
-                    GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({existing.Root.Count} root elements). PersistentWorld (Player) untouched.");
+
+                    // Find and untrack the old server world so DirtyTracker subscriptions
+                    // don't leak when we replace the element tree.
+                    var oldServerWorld = root.Worlds.Find(w => w.WorldName == serverWorldName);
+                    var dt = root.Registry.Get<DirtyTracker>("DirtyTracker");
+                    if (oldServerWorld != null)
+                        dt?.UntrackWorld(oldServerWorld);
+
+                    World selected;
+                    if (oldServerWorld != null)
+                    {
+                        oldServerWorld.ReplaceFrom(worldToUse);
+                        selected = oldServerWorld;
+                    }
+                    else
+                    {
+                        root.Worlds.Add(worldToUse);
+                        selected = worldToUse;
+                    }
+                    root.SelectWorld(selected);
+
+                    // Track the new world's elements for dirty-change propagation
+                    dt?.TrackWorld(selected);
+
+                    GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({selected.Root.Count} root elements). PersistentWorld (Player) untouched.");
                     break;
 
                 case MessageType.WorldArchive:
@@ -795,6 +827,36 @@ public partial class RootLoop : Node3D
                         }
 
                         GD.Print($"[Network] V12World archive received: '{fileName}' ({archiveBytes.Length} bytes) → {tempDir}");
+
+                        // ── Also load the world from the extracted archive ──
+                        // This gives us the full element tree with all components,
+                        // mesh vertex data, etc., correctly parsed from XML rather
+                        // than relying on BSON serialization which can lose data.
+                        try
+                        {
+                            var worldXmlPath = Path.Combine(tempDir, "world.xml");
+                            if (!File.Exists(worldXmlPath))
+                                worldXmlPath = Path.Combine(tempDir, "main.xml");
+                            if (File.Exists(worldXmlPath))
+                            {
+                                var loadTemplates = existingTemplates ?? new WorldTemplateProvider();
+                                var parser = new WorldMLParser { TemplateProvider = loadTemplates };
+                                var parsedRoot = parser.ParseFile(worldXmlPath);
+                                _loadedArchiveWorld = new World(parsedRoot.Name ?? worldName) { ExtractPath = tempDir, MountPoint = worldName };
+                                _loadedArchiveWorld.AddElement(parsedRoot);
+                                GD.Print($"[Network] Loaded world from archive XML: '{_loadedArchiveWorld.WorldName}' ({_loadedArchiveWorld.Root.Count} root elements, {CountElementsRecursive(_loadedArchiveWorld.Root)} total elements)");
+                            }
+                            else
+                            {
+                                GD.PrintErr($"[Network] No world.xml or main.xml found in extracted archive at {tempDir}");
+                                _loadedArchiveWorld = null;
+                            }
+                        }
+                        catch (Exception loadEx)
+                        {
+                            GD.PrintErr($"[Network] Failed to load world from archive: {loadEx.Message}");
+                            _loadedArchiveWorld = null;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -1068,6 +1130,70 @@ public partial class RootLoop : Node3D
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Count all elements in a tree (including root nodes).
+    /// </summary>
+    private static int CountElementsRecursive(List<IWorldElement> elements)
+    {
+        int count = 0;
+        foreach (var el in elements)
+        {
+            count++;
+            if (el.Children != null && el.Children.Count > 0)
+                count += CountElementsRecursive(el.Children);
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Copy server-authoritative element and component IDs from the BSON-serialized
+    /// server world into the locally-loaded archive world, so future WorldUpdate
+    /// patches match by ID. Elements are matched by name (recursively).
+    /// </summary>
+    private static void SyncElementIds(World serverWorld, World localWorld)
+    {
+        foreach (var serverRoot in serverWorld.Root)
+        {
+            foreach (var localRoot in localWorld.Root)
+            {
+                SyncElementIdsRecursive(serverRoot, localRoot);
+            }
+        }
+    }
+
+    private static void SyncElementIdsRecursive(IWorldElement serverEl, IWorldElement localEl)
+    {
+        if (!string.Equals(serverEl.Name, localEl.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Sync element ID
+        localEl.Id = serverEl.Id;
+
+        // Sync component IDs by matching type and name
+        foreach (var serverComp in serverEl.Components)
+        {
+            foreach (var localComp in localEl.Components)
+            {
+                if (localComp.GetType() == serverComp.GetType()
+                    && string.Equals(localComp.Name ?? "", serverComp.Name ?? "", StringComparison.OrdinalIgnoreCase))
+                {
+                    // ComponentBase.Id is now public set; IComponent.Id is get-only so we cast.
+                    if (localComp is ComponentBase cb)
+                        cb.Id = serverComp.Id;
+                }
+            }
+        }
+
+        // Recurse into children
+        foreach (var serverChild in serverEl.Children)
+        {
+            foreach (var localChild in localEl.Children)
+            {
+                SyncElementIdsRecursive(serverChild, localChild);
+            }
+        }
     }
 
     public override void _Notification(int what)
