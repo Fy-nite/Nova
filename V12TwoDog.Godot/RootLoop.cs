@@ -601,6 +601,69 @@ public partial class RootLoop : Node3D
         }
     }
 
+    /// <summary>
+    /// Count all elements in a tree (including root nodes).
+    /// </summary>
+    private static int CountElementsRecursive(List<IWorldElement> elements)
+    {
+        int count = 0;
+        foreach (var el in elements)
+        {
+            count++;
+            if (el.Children != null && el.Children.Count > 0)
+                count += CountElementsRecursive(el.Children);
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Copy server-authoritative element and component IDs from the BSON-serialized
+    /// server world into the locally-loaded archive world, so future WorldUpdate
+    /// patches match by ID. Elements are matched by name (recursively).
+    /// </summary>
+    private static void SyncElementIds(World serverWorld, World localWorld)
+    {
+        foreach (var serverRoot in serverWorld.Root)
+        {
+            foreach (var localRoot in localWorld.Root)
+            {
+                SyncElementIdsRecursive(serverRoot, localRoot);
+            }
+        }
+    }
+
+    private static void SyncElementIdsRecursive(IWorldElement serverEl, IWorldElement localEl)
+    {
+        if (!string.Equals(serverEl.Name, localEl.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Sync element ID
+        localEl.Id = serverEl.Id;
+
+        // Sync component IDs by matching type and name
+        foreach (var serverComp in serverEl.Components)
+        {
+            foreach (var localComp in localEl.Components)
+            {
+                if (localComp.GetType() == serverComp.GetType()
+                    && string.Equals(localComp.Name ?? "", serverComp.Name ?? "", StringComparison.OrdinalIgnoreCase))
+                {
+                    // ComponentBase.Id is now public set; IComponent.Id is get-only so we cast.
+                    if (localComp is ComponentBase cb)
+                        cb.Id = serverComp.Id;
+                }
+            }
+        }
+
+        // Recurse into children
+        foreach (var serverChild in serverEl.Children)
+        {
+            foreach (var localChild in localEl.Children)
+            {
+                SyncElementIdsRecursive(serverChild, localChild);
+            }
+        }
+    }
     private void UpdateLaser()
     {
         if (_pickup == null || !_pickup.HasRay) return;
