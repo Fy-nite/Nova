@@ -31,7 +31,7 @@ project/assembly_name="V12TwoDog.Godot"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/dear-imgui-godot/plugin.cfg", "res://addons/debug_menu/plugin.cfg", "res://addons/godot_mcp/plugin.cfg", "res://addons/worldml_exporter/plugin.cfg")
+enabled=PackedStringArray("res://addons/dear-imgui-godot/plugin.cfg", "res://addons/debug_menu/plugin.cfg", "res://addons/godot_mcp/plugin.cfg")
 
 [input]
 

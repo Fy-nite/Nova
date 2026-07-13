@@ -13,7 +13,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Finite.V12" Version="1.0.0" />
+      <ProjectReference Include="../libs/V12/V12.csproj" />
       <ProjectReference Include="..\V12TwoDog.Godot\V12TwoDog.Godot.csproj" />
     </ItemGroup>
 
