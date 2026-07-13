@@ -17,6 +17,8 @@ namespace V12TwoDog
 		private Dictionary<string, StandardMaterial3D> _materialCache = new();
 		private Dictionary<string, Texture2D> _textureCache = new();
 
+		public bool LockMouse { get; set; }
+
 		public Renderer(SceneTree t)
 		{
 			root = t;

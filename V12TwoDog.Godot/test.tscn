@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://deqpoouqthiyn"]
+
+[node name="Control" type="Control" unique_id=444601068]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Button" type="Button" parent="." unique_id=917316677]
+layout_mode = 0
+offset_left = 725.0
+offset_top = 152.0
+offset_right = 862.0
+offset_bottom = 314.0
+text = "thinssdgf
+"
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="." unique_id=248680131]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="SubViewport" type="SubViewport" parent="SubViewportContainer" unique_id=365503080]
+
+[node name="Node3D" type="Node3D" parent="SubViewportContainer/SubViewport" unique_id=793932230]
+
+[node name="CSGBox3D" type="CSGBox3D" parent="SubViewportContainer/SubViewport/Node3D" unique_id=1304756613]
+
+[node name="Camera3D" type="Camera3D" parent="SubViewportContainer/SubViewport/Node3D" unique_id=1768257693]
+transform = Transform3D(1, 0, 0, 0, 0.9659258, 0.25881904, 0, -0.25881904, 0.9659258, 0, 0.6423185, 1.8561386)

@@ -293,7 +293,7 @@ public partial class RootLoop : Node3D
         _laserHit.MaterialOverride = hitMat;
         AddChild(_laserHit);
 
-        if (_xr?.IsAvailable != true)
+        if (_xr?.IsAvailable != true && renderer?.LockMouse == true)
             CallDeferred(nameof(SetMouseCaptured), true);
 
         // ── Start V12 worker thread ──
@@ -343,6 +343,12 @@ public partial class RootLoop : Node3D
 	{
         // ── Update XR tracking and input ──
         _xr?.Update();
+
+        // ── Sync mouse capture with renderer option ──
+        if (_xr?.IsAvailable != true && renderer?.LockMouse == true && !_mouseCaptured)
+            SetMouseCaptured(true);
+        else if (renderer?.LockMouse == false && _mouseCaptured)
+            SetMouseCaptured(false);
 
         var inputService = root.Registry.Get<V12.Core.Input.InputService>();
 		if (inputService != null)
@@ -434,7 +440,11 @@ public partial class RootLoop : Node3D
 			{
 				inputService.SendEvent(new V12.Core.Input.InputEvent { Type = V12.Core.Input.InputEventType.ButtonDown, Name = "esc", Value = 1 });
 				if (_xr?.IsAvailable != true)
-					SetMouseCaptured(!_mouseCaptured);
+				{
+					_mouseCaptured = !_mouseCaptured;
+					SetMouseCaptured(_mouseCaptured);
+					if (renderer != null) renderer.LockMouse = _mouseCaptured;
+				}
 			}
 			// F10 toggles debug logging
 			if (Input.IsKeyPressed(Key.F10))

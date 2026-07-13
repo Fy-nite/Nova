@@ -5,10 +5,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
+		<TwoDogVariant>editor</TwoDogVariant>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="2dog" Version="0.1.23-pre" />
+        <PackageReference Include="2dog" Version="4.7.0.*" />
     </ItemGroup>
 
     <ItemGroup>
