@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="../V12.Basic/V12.Basic.csproj" />
+  <Project Path="V12TwoDog.Godot/V12TwoDog.Godot.csproj" />
+  <Project Path="V12TwoDog/V12TwoDog.csproj" />
+</Solution>
