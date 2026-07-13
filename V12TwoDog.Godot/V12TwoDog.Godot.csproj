@@ -10,8 +10,8 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Finite.V12" Version="1.0.0" />
-    <PackageReference Include="Finite.V12.Basic" Version="1.0.0" />
+    <ProjectReference Include="../libs/V12/V12.csproj"/>
+    <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj"/>
   </ItemGroup>
   <ItemGroup>
     <Folder Include="addons\" />
