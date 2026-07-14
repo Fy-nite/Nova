@@ -13,6 +13,6 @@ func _enter_tree() -> void:
 		remove_autoload_singleton(AUTOLOAD_NAME)
 		add_autoload_singleton(AUTOLOAD_NAME, script)
 
-func _exit_tree() -> void:
+func _disable_plugin() -> void:
 	if ProjectSettings.has_setting("autoload/" + AUTOLOAD_NAME):
 		remove_autoload_singleton(AUTOLOAD_NAME)
