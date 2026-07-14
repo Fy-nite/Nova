@@ -8,7 +8,7 @@ public class Program
 
         using var engine = new Engine("V12TwoDog", Engine.ResolveProjectDir());
         using var godot = engine.Start();
-      
+        
         while (!godot.Iteration())
         {
             if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Q)

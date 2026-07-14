@@ -10,7 +10,7 @@ using V12.Components;
 namespace V12TwoDog
 {
 		public class Renderer : IRenderer
-	{
+	    {
 		private readonly List<IRenderable> _renderables = new List<IRenderable>();
 		public SceneTree root;
 		private Dictionary<long, Node3D> _nodesByElementId = new();

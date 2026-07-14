@@ -5,15 +5,25 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="hotreload.xml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
+    	    <!-- Must be the SAME project path V12.Basic references internally
+           (its nested libs/V12 submodule). Referencing ../libs/V12 as well
+           creates two projects with the identity V12/1.0.0, which makes the
+           SDK drop V12 from the generated deps.json entirely — and Godot's
+           PluginLoadContext then cannot resolve V12.dll at runtime. -->
+      <ProjectReference Include="../libs/V12.Basic/libs/V12/V12.csproj" />
+    <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj" />
+    <ProjectReference Include="..\Nova.SDK\Nova.SDK.csproj" />
+    <ProjectReference Include="..\Nova.Shared\Nova.Shared.csproj" />
   </ItemGroup>
+	
   <ItemGroup>
-    <ProjectReference Include="../libs/V12/V12.csproj"/>
-    <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj"/>
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="addons\" />
+    <None Include="addons\worldml_exporter\IV12ComponentNode.cs.uid" />
+    <None Include="addons\worldml_exporter\NodeConverter3D.cs.uid" />
+    <None Include="addons\worldml_exporter\NodeConverterUI.cs.uid" />
+    <None Include="addons\worldml_exporter\plugin.cfg" />
+    <None Include="addons\worldml_exporter\README.md" />
+    <None Include="addons\worldml_exporter\V12EditorPlugin.cs.uid" />
+    <None Include="addons\worldml_exporter\V12WorldPacker.cs.uid" />
+    <None Include="addons\worldml_exporter\WorldMLExporter.cs.uid" />
   </ItemGroup>
 </Project>

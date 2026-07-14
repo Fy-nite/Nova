@@ -1,0 +1,34 @@
+
+diff --git a/V12TwoDog.Godot/V12TwoDog.Godot.csproj b/V12TwoDog.Godot/V12TwoDog.Godot.csproj
+index a83a088..14eb1cc 100644
+--- a/V12TwoDog.Godot/V12TwoDog.Godot.csproj
++++ b/V12TwoDog.Godot/V12TwoDog.Godot.csproj
+@@ -10,7 +10,11 @@
+     </Content>
+   </ItemGroup>
+   <ItemGroup>
+-    <ProjectReference Include="../libs/V12/V12.csproj"/>
++    <!-- Same V12 project path as V12.Basic's internal reference (its nested
++         libs/V12 submodule) — a second V12.csproj path would collide on the
++         identity V12/1.0.0 and get dropped from deps.json, breaking runtime
++         assembly resolution of V12.dll. -->
++    <ProjectReference Include="../libs/V12.Basic/libs/V12/V12.csproj"/>
+     <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj"/>
+   </ItemGroup>
+   <ItemGroup>
+diff --git a/V12TwoDog/V12TwoDog.csproj b/V12TwoDog/V12TwoDog.csproj
+index 7b93fb2..3a791f1 100644
+--- a/V12TwoDog/V12TwoDog.csproj
++++ b/V12TwoDog/V12TwoDog.csproj
+@@ -13,7 +13,12 @@
+     </ItemGroup>
+     <ItemGroup>
+-      <ProjectReference Include="../libs/V12/V12.csproj" />
++      <!-- Must be the SAME project path V12.Basic references internally
++           (its nested libs/V12 submodule). Referencing ../libs/V12 as well
++           creates two projects with the identity V12/1.0.0, which makes the
++           SDK drop V12 from the generated deps.json entirely — and Godot's
++           PluginLoadContext then cannot resolve V12.dll at runtime. -->
++      <ProjectReference Include="../libs/V12.Basic/libs/V12/V12.csproj" />
+       <ProjectReference Include="..\V12TwoDog.Godot\V12TwoDog.Godot.csproj" />
+     </ItemGroup>

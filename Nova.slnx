@@ -1,5 +1,15 @@
 <Solution>
-  <Project Path="../V12.Basic/V12.Basic.csproj" />
+  <Folder Name="/Libs/">
+    <Project Path="../V12.Basic/V12.Basic.csproj" />
+    <Project Path="libs/V12/V12.csproj" />
+  </Folder>
+  <Folder Name="/Shared/">
+    <Project Path="Nova.SDK/Nova.SDK.csproj" Id="0e88a8fd-e1d3-4885-9cde-1eecc88e7b3b" />
+    <Project Path="Nova.Shared/Nova.Shared.csproj" Id="66cfd839-6e9c-4728-8450-d8fa83cb093e" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="readme.md" />
+  </Folder>
+  <Project Path="V12TwoDog.2dog/V12TwoDog.csproj" />
   <Project Path="V12TwoDog.Godot/V12TwoDog.Godot.csproj" />
-  <Project Path="V12TwoDog/V12TwoDog.csproj" />
 </Solution>

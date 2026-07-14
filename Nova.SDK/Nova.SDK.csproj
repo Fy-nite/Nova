@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="GodotSharp" Version="4.7.0" />
+		<PackageReference Include="GodotSharpEditor" Version="4.7.0" />
+	</ItemGroup>
+	<ItemGroup>
+	    <!-- Must be the SAME project path V12.Basic references internally
+           (its nested libs/V12 submodule). Referencing ../libs/V12 as well
+           creates two projects with the identity V12/1.0.0, which makes the
+           SDK drop V12 from the generated deps.json entirely — and Godot's
+           PluginLoadContext then cannot resolve V12.dll at runtime. -->
+      <ProjectReference Include="../libs/V12.Basic/libs/V12/V12.csproj" />
+	</ItemGroup>
+
+
+</Project>

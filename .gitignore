@@ -26,6 +26,10 @@ build/
 .import/
 # export_presets.cfg
 
+#files with tilde
+~
+
+
 # OS-specific
 .DS_Store
 Thumbs.db
