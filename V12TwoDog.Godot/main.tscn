@@ -30,4 +30,3 @@ script = ExtResource("1_ig7tw")
 
 [node name="GenericStuff" type="Node3D" parent="." unique_id=1132915918]
 
-[node name="ImGuiApi" type="ImGuiApi" parent="." unique_id=49128385]
