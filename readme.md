@@ -87,3 +87,5 @@ Press `Q` to exit.
 - [`Nova.SDK/readme.md`](Nova.SDK/readme.md) - WorldML exporter SDK documentation
 - [`V12TwoDog.2dog/readme.md`](V12TwoDog.2dog/readme.md) - Headless CLI documentation
 - [`V12TwoDog.Godot/readme.md`](V12TwoDog.Godot/readme.md) - Godot project documentation
+
+nova is licenced under MIT with a exception for V12 licencing

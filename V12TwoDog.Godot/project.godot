@@ -18,6 +18,10 @@ run/main_scene="uid://hdjvbjy78ms1"
 config/features=PackedStringArray("4.7", "C#")
 config/icon="uid://c0pjr5qikrm80"
 
+[autoload]
+
+ImGui="*uid://b7gfghxop1jan"
+
 [display]
 
 window/size/viewport_width=1280
