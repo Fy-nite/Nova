@@ -19,7 +19,7 @@ public static class NodeConverterUI
 
         if (ccls is "HSlider" or "VSlider")
         {
-            var rn = (Range)node;
+            var rn = (global::Godot.Range)node;
             var span = Mathf.Max(rn.MaxValue - rn.MinValue, 0.0001f);
             var norm = (rn.Value - rn.MinValue) / span;
             return $"{ind}\t<SliderComponent value=\"{norm:F4}\" min=\"{rn.MinValue:F4}\" max=\"{rn.MaxValue:F4}\" step=\"{rn.Step:F4}\" />\n";

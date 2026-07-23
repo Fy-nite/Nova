@@ -9,7 +9,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="2dog" Version="4.7.0.*" />
+        <PackageReference Include="2dog.engine" Version="4.7.1.*" />
     </ItemGroup>
 
     <ItemGroup>
@@ -23,6 +23,7 @@
       <ProjectReference Include="..\Nova.SDK\Nova.SDK.csproj" />
       <ProjectReference Include="..\Nova.Shared\Nova.Shared.csproj" />
       <ProjectReference Include="..\V12TwoDog.Godot\V12TwoDog.Godot.csproj" />
+      <ProjectReference Include="..\V12.SampleGame\V12.SampleGame.csproj" />
     </ItemGroup>
 	<!-- Remove duplicate Godot.SourceGenerators that come from the Godot project
          (2dog package already embeds them) -->
@@ -32,4 +33,14 @@
         <GodotProjectDir>../V12TwoDog.Godot</GodotProjectDir>
         <UserSecretsId>db5adb7b-d95b-491a-8296-f6a6930914a7</UserSecretsId>
     </PropertyGroup>
+
+    <!-- Copy gamepak DLLs to gamepaks/ subfolder so GamepackLoader finds them -->
+    <Target Name="CopyGamepaks" AfterTargets="Build">
+        <ItemGroup>
+            <_SampleGameFile Include="$(MSBuildProjectDirectory)\..\V12.SampleGame\bin\$(Configuration)\$(TargetFramework)\V12.SampleGame.*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(_SampleGameFile)" DestinationFolder="$(OutputPath)gamepaks" SkipUnchangedFiles="true" />
+        <!-- Also copy to project dir so `dotnet run` (CWD=project dir) finds gamepaks/ -->
+        <Copy SourceFiles="@(_SampleGameFile)" DestinationFolder="$(MSBuildProjectDirectory)\gamepaks" SkipUnchangedFiles="true" />
+    </Target>
 </Project>

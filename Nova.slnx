@@ -1,7 +1,6 @@
 <Solution>
   <Folder Name="/Libs/">
     <Project Path="libs/V12.Basic/V12.Basic.csproj" />
-    <Project Path="libs/V12/V12.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="Nova.SDK/Nova.SDK.csproj" Id="0e88a8fd-e1d3-4885-9cde-1eecc88e7b3b" />
@@ -10,6 +9,7 @@
   <Folder Name="/Solution Items/">
     <File Path="readme.md" />
   </Folder>
+  <Project Path="V12.SampleGame/V12.SampleGame.csproj" />
   <Project Path="V12TwoDog.2dog/V12TwoDog.csproj" />
   <Project Path="V12TwoDog.Godot/V12TwoDog.Godot.csproj" />
 </Solution>

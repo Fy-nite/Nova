@@ -70,7 +70,11 @@ public partial class RootLoop : Node3D
     {
 		V12.Core.Networking.BsonConfig.Initialize();
 		Console.SetOut(new GodotConsoleWriter());
-		root = new GameRoot();
+
+        // Enable Serilog so GameRoot.Log / GamepackLoader log messages actually appear
+        GameRoot.ConfigureLogging();
+
+        root = new GameRoot();
 		renderer = new V12TwoDog.Renderer(GetTree());
 
         audioPlayer = new GodotAudioPlayer();
@@ -112,7 +116,9 @@ public partial class RootLoop : Node3D
         root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _godotPhysics);
 
         // ── Discover game paks ──
-        root.LoadGamepacks("gamepaks");
+        var gamepaksDir = Path.Combine(AppContext.BaseDirectory, "gamepaks");
+        GD.Print($"[RootLoop] Looking for gamepaks in: '{gamepaksDir}' (exists={Directory.Exists(gamepaksDir)})");
+        root.LoadGamepacks(gamepaksDir);
 
         // ── Parse --gamepak CLI arg ──
         string gamepakName = null;
