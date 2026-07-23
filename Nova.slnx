@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/Libs/">
-    <Project Path="../V12.Basic/V12.Basic.csproj" />
+    <Project Path="libs/V12.Basic/V12.Basic.csproj" />
     <Project Path="libs/V12/V12.csproj" />
   </Folder>
   <Folder Name="/Shared/">
