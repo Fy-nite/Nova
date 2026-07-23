@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="DemoScene.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="DemoScene.xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\libs\V12.Basic\V12.Basic.csproj" />
+    <ProjectReference Include="..\libs\V12\V12.csproj" />
+  </ItemGroup>
+
+</Project>

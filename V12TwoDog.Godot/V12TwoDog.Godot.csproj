@@ -1,4 +1,4 @@
-﻿<Project Sdk="Godot.NET.Sdk/4.7.0">
+<Project Sdk="Godot.NET.Sdk/4.7.0">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
 
@@ -26,4 +26,10 @@
     <None Include="addons\worldml_exporter\V12WorldPacker.cs.uid" />
     <None Include="addons\worldml_exporter\WorldMLExporter.cs.uid" />
   </ItemGroup>
+    <!-- added by 2dog convert: properties 2dog hosts need that were not already set -->
+    <PropertyGroup>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <DefineConstants>$(DefineConstants);LIBGODOT_ENABLED</DefineConstants>
+        <DefaultItemExcludes>$(DefaultItemExcludes);V12TwoDog.Godot.2dog/**;V12TwoDog.Godot.web/**;V12TwoDog.Godot.tests/**</DefaultItemExcludes>
+    </PropertyGroup>
 </Project>
