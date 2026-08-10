@@ -17,6 +17,43 @@ namespace V12TwoDog
 		private Dictionary<string, StandardMaterial3D> _materialCache = new();
 		private Dictionary<string, Texture2D> _textureCache = new();
 
+		// ── Snapshot interpolation ──
+		// The V12 worker captures snapshots at ~60fps while ApplySnapshot runs
+		// at the physics/render rate (much higher). Without interpolation each
+		// node snaps between keyframes every ~16ms — visible jitter, especially
+		// for hands/players. We glide from the previous keyframe to the new one
+		// over ~one snapshot interval instead.
+		private class NodeAnim
+		{
+			public Transform3D From;
+			public Transform3D To;
+			public ulong StartMs;
+			public const double DurationMs = 1000.0 / 60.0; // one snapshot interval
+		}
+		private readonly Dictionary<long, NodeAnim> _nodeAnims = new();
+		private readonly Dictionary<long, Transform3D> _nodeLastTargets = new();
+		private const float TeleportThreshold = 10f; // snap on jumps bigger than this
+
+		// ── Directly-driven elements ──
+		// Element id → Godot node that should own that element's render node.
+		// Used by XRTrackingService to pin the local XR head/hand boxes to the
+		// real tracked controller/hand nodes so they render with zero latency,
+		// instead of lagging behind the 60Hz snapshot + interpolation pipeline.
+		private readonly Dictionary<long, Node3D> _directParents = new();
+
+		/// <summary>
+		/// Parent an element's render node directly under <paramref name="parent"/>,
+		/// bypassing the snapshot hierarchy and snapshot interpolation. Pass null to
+		/// return the element to normal snapshot-driven rendering.
+		/// </summary>
+		public void SetDirectParent(long elementId, Node3D? parent)
+		{
+			if (parent == null)
+				_directParents.Remove(elementId);
+			else
+				_directParents[elementId] = parent;
+		}
+
 		public bool LockMouse { get; set; }
 
 		public Renderer(SceneTree t)
@@ -251,7 +288,19 @@ namespace V12TwoDog
 
 				// Re-parent to element parent's node (or root)
 				Node targetParent = root.CurrentScene;
-				if (rs.ParentId != 0
+				bool directParented = false;
+				if (_directParents.TryGetValue(rs.ElementId, out var directParent))
+				{
+					// Directly-driven element (e.g. local XR rig): own it to the
+					// tracked node. The tracker's transform is the source of truth.
+					if (directParent != null && GodotObject.IsInstanceValid(directParent)
+						&& directParent.IsInsideTree())
+					{
+						targetParent = directParent;
+						directParented = true;
+					}
+				}
+				else if (rs.ParentId != 0
 					&& _nodesByElementId.TryGetValue(rs.ParentId, out var parentNode)
 					&& GodotObject.IsInstanceValid(parentNode))
 				{
@@ -261,6 +310,16 @@ namespace V12TwoDog
 				if (node.GetParent() != targetParent)
 					node.Reparent(targetParent);
 
+				if (directParented)
+				{
+					// Driven directly by the tracker node — hold at identity local
+					// and skip snapshot interpolation so the tracked pose wins.
+					node.Transform = Transform3D.Identity;
+					_nodeAnims.Remove(rs.ElementId);
+					_nodeLastTargets.Remove(rs.ElementId);
+				}
+				else
+				{
 				// Use local transform for hierarchy; fall back to world transform if unset
 				var t = rs.HasLocalTransform ? rs.LocalTransform : rs.Transform;
 				var basis = new Basis(
@@ -269,7 +328,53 @@ namespace V12TwoDog
 					new Vector3(t.M31, t.M32, t.M33)
 				);
 				var origin = new Vector3(t.M41, t.M42, t.M43);
-				node.Transform = new Transform3D(basis, origin);
+				var target = new Transform3D(basis, origin);
+				ulong now = Time.GetTicksMsec();
+
+				// ── Snapshot interpolation ──
+				// First sight of an element: snap into place (no glide).
+				if (!_nodeLastTargets.TryGetValue(rs.ElementId, out var lastTarget))
+				{
+					_nodeLastTargets[rs.ElementId] = target;
+					node.Transform = target;
+				}
+				else if (!lastTarget.IsEqualApprox(target))
+				{
+					// New keyframe — glide from the current visual toward it.
+					_nodeLastTargets[rs.ElementId] = target;
+
+					// Teleport / world-switch: snap instead of a long glide.
+					if (node.Transform.Origin.DistanceTo(target.Origin) > TeleportThreshold)
+					{
+						node.Transform = target;
+						_nodeAnims.Remove(rs.ElementId);
+					}
+					else
+					{
+						_nodeAnims[rs.ElementId] = new NodeAnim
+						{
+							From = node.Transform,
+							To = target,
+							StartMs = now
+						};
+					}
+				}
+
+				// Advance any active glide toward the current keyframe.
+				if (_nodeAnims.TryGetValue(rs.ElementId, out var anim))
+				{
+					double lerpT = (double)(now - anim.StartMs) / NodeAnim.DurationMs;
+					if (lerpT >= 1.0)
+					{
+						node.Transform = anim.To;
+						_nodeAnims.Remove(rs.ElementId);
+					}
+					else
+					{
+						node.Transform = anim.From.InterpolateWith(anim.To, (float)lerpT);
+					}
+				}
+				}
 
 				// Update properties
 				UpdateNodeProperties(node, rs);
@@ -293,7 +398,11 @@ namespace V12TwoDog
 				}
 			}
 			foreach (var id in toRemove)
+			{
 				_nodesByElementId.Remove(id);
+				_nodeAnims.Remove(id);
+				_nodeLastTargets.Remove(id);
+			}
 		}
 
 		private Node3D CreateNode(RenderableSnapshot rs)

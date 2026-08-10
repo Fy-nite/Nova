@@ -1,43 +1,68 @@
 # V12TwoDog.2dog
 
-A **minimal console entry point** for running V12 outside of the Godot editor. Uses the `2dog` package (a .NET wrapper for headless Godot instances) to launch a Godot runtime.
+The **V12 host library** — embeds the full V12 runtime (Godot as a library via
+the `2dog` package) so any .NET application can run V12 without the Godot
+editor. This is a **library** now, not a console entry point: reference it from
+your own app and boot it with `V12TwoDog.V12Host`.
 
 ## Purpose
 
-Provides a way to run the V12 engine without the full Godot editor, useful for headless servers, testing, or CLI-driven workflows.
+Provides the reusable bridge between:
+- **2dog** (`twodog.Engine`) — Godot as an embeddable .NET library
+- **V12TwoDog.Godot** — the Godot game project (`main.tscn` → `RootLoop`)
+- **V12Runtime** (in `Nova.Shared`) — all the V12 wiring (GameRoot, renderer,
+  audio, physics, XR, input, networking, gamepaks, worker thread)
+
+The consumer only owns the frame pump.
 
 ## How It Works
 
-`Program.cs` creates a `2dog.Engine` instance, starts a headless Godot runtime, and runs an iteration loop until `Q` is pressed:
-
 ```csharp
-using var engine = new Engine("V12TwoDog", Engine.ResolveProjectDir());
-using var godot = engine.Start();
-
-while (!godot.Iteration())
+[STAThread]
+static void Main(string[] args)
 {
-    if (Console.KeyAvailable && Console.ReadKey(true).Key == ConsoleKey.Q)
-        break;
-    Update(godot, engine);
+    using var host = new V12Host();
+    host.Start(args: args);          // boots Godot, runs run/main_scene
+    while (!host.Iteration()) { }    // your per-frame logic
 }
 ```
 
-## Running
+`Start()` uses `Engine.ResolveContent()` — raw project assets during
+development (from the `GodotProjectDir` metadata this host embeds) or an
+exe-adjacent `.pck` in published builds.
 
-```bash
-dotnet run --project V12TwoDog.2dog
+## Consuming
+
+Add a project reference:
+
+```xml
+<ProjectReference Include="..\V12TwoDog.2dog\V12TwoDog.csproj" />
 ```
 
-Press `Q` to exit.
+See `V12.ConsumerApp` for a complete minimal consumer:
 
-## Dependencies
+```bash
+dotnet run --project V12.ConsumerApp
+```
 
-- **2dog** 4.7.0.x (NuGet) - Headless Godot embedding
-- Project reference: `V12`
-- The Godot project directory points to `../V12TwoDog.Godot`
+The Sample Game auto-starts: `RootLoop` loads it via `ProjectReference`
+(no `--gamepak` arg or DLL scanning needed). Press `Q` to exit.
 
 ## Configuration
 
 The `V12TwoDog.csproj` sets:
-- `TwoDogVariant` = `editor` (uses the editor variant of Godot)
+- `TwoDogVariant` = `editor` (uses the editor variant of Godot — required for
+  the worldml import pipeline)
 - `GodotProjectDir` = `../V12TwoDog.Godot` (path to the Godot project)
+- `TwoDogRemoveDuplicateGodotAnalyzers` = `true` (host references a
+  `Godot.NET.Sdk` game project *and* `2dog.engine`, which both ship
+  `Godot.SourceGenerators`)
+
+## Notes
+
+- Only one Godot instance per process. Dispose the host fully before restarting.
+- On Windows, host the engine from an STA thread (`[STAThread]`) for OLE
+  drag/drop, IME, and native dialogs.
+- `PublishSingleFile` / `PublishAot` are unsupported (2dog loads the game
+  assembly through hostfxr from on-disk files).
+

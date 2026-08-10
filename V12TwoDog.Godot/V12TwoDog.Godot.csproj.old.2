@@ -1,4 +1,4 @@
-﻿<Project Sdk="Godot.NET.Sdk/4.7.1">
+﻿<Project Sdk="Godot.NET.Sdk/4.7.0">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
 
@@ -14,11 +14,6 @@
     <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj" />
     <ProjectReference Include="..\Nova.SDK\Nova.SDK.csproj" />
     <ProjectReference Include="..\Nova.Shared\Nova.Shared.csproj" />
-    <!-- Direct-reference the Sample Game so it ships with this game assembly
-         and RootLoop can auto-start it (see RootLoop._Ready) — this is what
-         lets the Sample Game run when pressing Play in the editor, including
-         on a VR headset, without any gamepak DLL scanning. -->
-    <ProjectReference Include="..\V12.SampleGame\V12.SampleGame.csproj" />
   </ItemGroup>
 	
   <ItemGroup>

@@ -1,11 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
-        <OutputType>Exe</OutputType>
+        <!-- Library: this project now *embeds* the V12+Godot runtime for other
+             apps to reference. Consumers boot it via V12TwoDog.V12Host. -->
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
 		<TwoDogVariant>editor</TwoDogVariant>
+		<!-- This host references a Godot.NET.Sdk game project AND 2dog.engine
+             (which embeds Godot.SourceGenerators) — drop the duplicates. -->
+		<TwoDogRemoveDuplicateGodotAnalyzers>true</TwoDogRemoveDuplicateGodotAnalyzers>
     </PropertyGroup>
 
     <ItemGroup>
@@ -33,14 +37,4 @@
         <GodotProjectDir>../V12TwoDog.Godot</GodotProjectDir>
         <UserSecretsId>db5adb7b-d95b-491a-8296-f6a6930914a7</UserSecretsId>
     </PropertyGroup>
-
-    <!-- Copy gamepak DLLs to gamepaks/ subfolder so GamepackLoader finds them -->
-    <Target Name="CopyGamepaks" AfterTargets="Build">
-        <ItemGroup>
-            <_SampleGameFile Include="$(MSBuildProjectDirectory)\..\V12.SampleGame\bin\$(Configuration)\$(TargetFramework)\V12.SampleGame.*" />
-        </ItemGroup>
-        <Copy SourceFiles="@(_SampleGameFile)" DestinationFolder="$(OutputPath)gamepaks" SkipUnchangedFiles="true" />
-        <!-- Also copy to project dir so `dotnet run` (CWD=project dir) finds gamepaks/ -->
-        <Copy SourceFiles="@(_SampleGameFile)" DestinationFolder="$(MSBuildProjectDirectory)\gamepaks" SkipUnchangedFiles="true" />
-    </Target>
 </Project>

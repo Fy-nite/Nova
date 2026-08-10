@@ -8,9 +8,23 @@ using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.WorldML;
+// UI components live in V12.Components.UI but share names with physics/render
+// components (ButtonComponent, ProgressBarComponent), so alias them here.
+using UICanvas = V12.Components.UI.CanvasComponent;
+using UILabel = V12.Components.UI.LabelComponent;
+using UIButton = V12.Components.UI.ButtonComponent;
+using UIProgressBar = V12.Components.UI.ProgressBarComponent;
+using ButtonComponent = V12.Components.ButtonComponent;
 
 namespace V12.SampleGame
 {
+    /// <summary>
+    /// this is V12's Sample game pak
+    /// this is the entry point for the game pak, and is called by the V12 engine when the game pak is loaded
+    /// 
+    /// for making a proper game, please don't use the existing SampleGamePack, but instead create your own game pak and implement the IV12Gamepack interface
+    /// this code is horrible lOL
+    /// </summary>
     public class SampleGamePack : IV12Gamepack
     {
         private GameRoot _gameroot = default!;
@@ -35,24 +49,44 @@ namespace V12.SampleGame
         {
             Console.WriteLine("[SampleGamePack] OnStart called");
 
+            // Gamepak mode starts with NO selected world — create + select one
+            // or nothing ever appears on screen.
+            var world = _gameroot.CreateWorld("SampleWorld");
+            _gameroot.SelectWorld(world);
+            Console.WriteLine($"[SampleGamePack] Created + selected world '{world.WorldName}'");
+
             var xrService = _gameroot.Registry.Get("XRTrackingService");
-            if (xrService != null)
-            {
-                Console.WriteLine("[SampleGamePack] XR mode — spawning XR player");
-                SpawnPhysicsWorldOnly();
-                SpawnXrScene();
-            }
-            else
-            {
-                Console.WriteLine("[SampleGamePack] Desktop mode — spawning physics test world");
-                SpawnPhysicsTestWorld();
-            }
+            bool xrMode = xrService != null;
+            Console.WriteLine(xrMode
+                ? "[SampleGamePack] XR mode — spawning XR player (rig attached)"
+                : "[SampleGamePack] Desktop mode — spawning player (XR rig attached so hands track when XR comes up)");
+
+            SpawnPhysicsWorldOnly();
+
+            // Demo world-space UI canvas (CanvasComponent system, rendered by
+            // WorldCanvasSystem): title, animated progress bar, button, status text.
+            SpawnWorldUi(world);
+
+            // Always build the player WITH the XR rig (head + hands), and always
+            // into PersistentWorld:
+            //  - GameRoot.Player only searches PersistentWorld. The XR player
+            //    used to go into SelectedWorld, so player sync (incl. hand
+            //    poses) never sent — nothing for V12 to read back.
+            //  - The rig existing from the start means XRTrackingService can
+            //    write head/hand poses into it the moment OpenXR comes up, and
+            //    CapturePlayerRig can send them over the network.
+            var player = BuildPlayer(xrMode);
+            _gameroot.PersistentWorld.AddElement(player);
+            Console.WriteLine("[SampleGamePack] Player (with XR rig) added to PersistentWorld (survives world switches).");
+
+            SpawnSpawnButton(world);
 
             try
             {
                 Console.WriteLine("Loading World");
-                var world = WorldLoader.LoadFromArchive("tbg.V12World");
-                _gameroot.SelectedWorld?.Root.AddRange(world.Root);
+                // var loadedWorld = WorldLoader.LoadFromArchive("tbg.V12World");
+                Console.WriteLine("World loading is disabled for client systems because the world archive is not included in the client build.");
+                // _gameroot.SelectedWorld?.Root.AddRange(loadedWorld.Root);
             }
             catch (Exception ex)
             {
@@ -77,19 +111,57 @@ namespace V12.SampleGame
             return reader.ReadToEnd();
         }
 
-        private void SpawnXrScene()
+        /// <summary>
+        /// Build the local Player element. In both modes the full XR rig
+        /// (XR_Root → XR_Head / XR_LeftHand / XR_RightHand) is attached so the
+        /// head/hand poses are always available to XRTrackingService and the
+        /// network sync, even if OpenXR comes up after boot.
+        /// </summary>
+        private Element BuildPlayer(bool xrMode)
         {
-            var world = _gameroot.SelectedWorld;
-            if (world == null) return;
+            var player = new Element
+            {
+                Name = "Player",
+                LocalTransform = new TRS { Position = new Vector3(0, 0f, 0), Rotation = Quaternion.Identity, Scale = Vector3.One }
+            };
+            player.AddComponent(new PlayerComponent { IsXrMode = xrMode });
 
-            var xrPlayer = new Element { Name = "Player" };
-            xrPlayer.AddComponent(new PlayerComponent { IsXrMode = true });
-            xrPlayer.AddComponent(new VRPlayerComponent());
-            world.AddElement(xrPlayer);
+            if (xrMode)
+            {
+                player.AddComponent(new VRPlayerComponent());
 
+                // Give the XR player a physics presence. A kinematic body follows
+                // the element transform (which PlayerComponent drives via
+                // thumbstick locomotion) while still occupying the world: pickup
+                // raycasts can exclude it and dynamic bodies collide with it.
+                player.AddComponent(new ColliderComponent(MeshShape.Capsule, 0.6f, 1f, 0.6f));
+                player.AddComponent(new PhysicsBodyComponent { IsKinematic = true });
+            }
+            else
+            {
+                player.AddComponent(new LocomotionComponent
+                {
+                    MoveSpeed = 5f,
+                    JumpStrength = 6f,
+                    Gravity = 20f
+                });
+                player.AddComponent(new ColliderComponent(MeshShape.Capsule, 0.6f, 1f, 0.6f));
+                player.AddComponent(new PhysicsBodyComponent { IsKinematic = false });
+
+                var playerMesh = new MeshComponent(MeshShape.Capsule, 0.6f, 1.8f, 0.6f);
+                player.AddComponent(playerMesh);
+                player.AddComponent(new MeshRenderer { Mesh = playerMesh });
+
+                player.AddComponent(new ScriptComponent
+                {
+                    ScriptText = "function on_init()\n    print(\"Hello from Lua!\")\nend"
+                });
+            }
+
+            // ── XR rig: ALWAYS present ──
             var xrRoot = new Element { Name = "XR_Root" };
             xrRoot.AddComponent(new XRRootComponent());
-            xrPlayer.AddChild(xrRoot);
+            player.AddChild(xrRoot);
 
             var xrHead = MakeBox("XR_Head", new Vector3(0.1f, 0.1f, 0.06f));
             xrHead.AddComponent(new XRHeadComponent());
@@ -106,7 +178,15 @@ namespace V12.SampleGame
             xrRight.AddComponent(new XRVisualizerComponent { Target = XRPoseTarget.RightHand });
             xrRoot.AddChild(xrRight);
 
-            // ── Demo button: spawns a physics box when pressed ──
+            return player;
+        }
+
+        /// <summary>
+        /// Demo button that spawns a physics box when pressed — a handy test
+        /// target for the XR interact/pickup systems and desktop raycast pickup. The button is a kinematic box with a ButtonComponent that calls back into this gamepak to spawn a dynamic box in front of the player.
+        /// </summary>
+        private void SpawnSpawnButton(World world)
+        {
             var spawnCount = 0;
             var button = new Element
             {
@@ -141,12 +221,6 @@ namespace V12.SampleGame
             world.AddElement(button);
         }
 
-        private void SpawnPhysicsTestWorld()
-        {
-            SpawnPhysicsWorldOnly();
-            SpawnPlayer();
-        }
-
         private void SpawnPhysicsWorldOnly()
         {
             // ---- Ground ----
@@ -163,35 +237,6 @@ namespace V12.SampleGame
             _gameroot.SelectedWorld?.AddElement(ground);
         }
 
-        private void SpawnPlayer()
-        {
-            var player = new Element
-            {
-                Name = "Player",
-                LocalTransform = new TRS { Position = new Vector3(0, 1.5f, 0), Rotation = Quaternion.Identity, Scale = Vector3.One }
-            };
-            player.AddComponent(new PlayerComponent());
-            player.AddComponent(new LocomotionComponent
-            {
-                MoveSpeed = 5f,
-                JumpStrength = 6f,
-                Gravity = 20f
-            });
-            player.AddComponent(new ColliderComponent(MeshShape.Capsule, 0.6f, 1.8f, 0.6f));
-            player.AddComponent(new PhysicsBodyComponent { IsKinematic = false });
-
-            var playerMesh = new MeshComponent(MeshShape.Capsule, 0.6f, 1.8f, 0.6f);
-            player.AddComponent(playerMesh);
-            player.AddComponent(new MeshRenderer { Mesh = playerMesh });
-
-            player.AddComponent(new ScriptComponent
-            {
-                ScriptText = "function on_init()\n    print(\"Hello from Lua!\")\nend"
-            });
-            _gameroot.PersistentWorld.AddElement(player);
-            Console.WriteLine("[SampleGamePack] Player added to PersistentWorld (survives world switches).");
-        }
-
         private static Element MakeBox(string name, Vector3 scale)
         {
             var b = new Element { Name = name };
@@ -200,6 +245,63 @@ namespace V12.SampleGame
             b.AddComponent(mesh);
             b.AddComponent(new MeshRenderer { Mesh = mesh });
             return b;
+        }
+
+        /// <summary>
+        /// Demo world-space UI canvas (CanvasComponent system). A monitor-style
+        /// surface at the given world transform with a title, an animated progress
+        /// bar, a button, and a status label. Rendered by WorldCanvasSystem.
+        /// </summary>
+        private void SpawnWorldUi(World world)
+        {
+            var canvas = new Element
+            {
+                Name = "StatusMonitor",
+                LocalTransform = new TRS
+                {
+                    Position = new Vector3(2.5f, 1.6f, -3),
+                    Rotation = Quaternion.Identity,
+                    Scale = Vector3.One
+                }
+            };
+            canvas.AddComponent(new UICanvas());
+            canvas.AddComponent(new ScaleComponent(2f, 1.3f, 1f));
+            world.AddElement(canvas);
+
+            var title = new Element("MonitorTitle");
+            title.AddComponent(new UILabel { Text = "Status Monitor", FontSize = 22f });
+            canvas.AddChild(title);
+
+            var hpBar = new Element("HPBar");
+            hpBar.AddComponent(new UIProgressBar { Value = 0.75f });
+            canvas.AddChild(hpBar);
+
+            var refreshBtn = new Element("RefreshBtn");
+            refreshBtn.AddComponent(new UIButton("Refresh", () => Console.WriteLine("[UI] Refresh clicked")));
+            canvas.AddChild(refreshBtn);
+
+            var statusLabel = new Element("StatusLabel");
+            statusLabel.AddComponent(new UILabel { Text = "System: nominal", FontSize = 14f });
+            canvas.AddChild(statusLabel);
+
+            // Animate the progress bar to prove live updates flow through.
+            _gameroot.Registry.Register("DemoUiAnimator", new DemoUiAnimator(hpBar.GetComponent<UIProgressBar>()));
+        }
+
+        /// <summary>Bumps the demo progress bar every frame so UI updates are visible.</summary>
+        private sealed class DemoUiAnimator : IGameService
+        {
+            private readonly UIProgressBar _bar;
+            private float _t;
+            public DemoUiAnimator(UIProgressBar bar) { _bar = bar; }
+            public void Initialize(GameRoot g) { }
+            public void Update(GameRoot gameRoot) { }
+            public void Update(float deltaTime)
+            {
+                _t = (_t + deltaTime * 0.25f) % 1f;
+                if (_bar != null)
+                    _bar.Value = 0.25f + 0.75f * (0.5f + 0.5f * (float)Math.Sin(_t * Math.PI * 2));
+            }
         }
     }
 }

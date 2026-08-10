@@ -29,6 +29,10 @@ public class RemotePlayerManager
     private readonly Dictionary<long, RemoteTweenState> _remoteTweens = new();
     private const float TweenSpeed = 12f;
 
+    // ── Remote XR rig (head + hands) ──
+    private readonly Dictionary<long, RigTween> _rigTweens = new();
+    private readonly Dictionary<long, Dictionary<string, IWorldElement>> _rigElements = new();
+
     /// <summary>
     /// Name of the local world, used to switch back on disconnect.
     /// </summary>
@@ -44,7 +48,7 @@ public class RemotePlayerManager
     /// </summary>
     public void UpdateTweens(float delta)
     {
-        if (_remoteTweens.Count == 0) return;
+        if (_remoteTweens.Count == 0 && _rigTweens.Count == 0) return;
 
         float t = 1f - MathF.Exp(-TweenSpeed * delta);
         foreach (var kvp in _remoteTweens)
@@ -77,9 +81,25 @@ public class RemotePlayerManager
                 state.TargetPosition,
                 state.TargetRotation);
         }
+
+        // ── Tween remote XR rig parts (head / hands), local to the player ──
+        foreach (var playerId in _rigTweens.Keys.ToArray())
+        {
+            var rig = _rigTweens[playerId];
+            if (!_rigElements.TryGetValue(playerId, out var parts)) continue;
+
+            TweenRigPart(parts, "Head", ref rig.HeadVisPos, ref rig.HeadVisRot, rig.HeadTgtPos, rig.HeadTgtRot, t);
+            TweenRigPart(parts, "Left", ref rig.LeftVisPos, ref rig.LeftVisRot, rig.LeftTgtPos, rig.LeftTgtRot, t);
+            TweenRigPart(parts, "Right", ref rig.RightVisPos, ref rig.RightVisRot, rig.RightTgtPos, rig.RightTgtRot, t);
+        }
     }
 
-    public void ClearTweens() => _remoteTweens.Clear();
+    public void ClearTweens()
+    {
+        _remoteTweens.Clear();
+        _rigTweens.Clear();
+        _rigElements.Clear();
+    }
 
     /// <summary>
     /// Handle an incoming PlayerSync message: create or update a remote player element.
@@ -212,6 +232,16 @@ public class RemotePlayerManager
         _root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackElement(remotePlayer);
         // Initialise tween state so interpolation starts from the correct position
         _remoteTweens[playerSync.PlayerId] = new RemoteTweenState(playerSync.Position, playerSync.Rotation, playerSync.Position, playerSync.Rotation);
+
+        // ── XR rig (head + hands) ──
+        var rig = BuildRemoteRig(playerSync, remotePlayer);
+        if (rig != null)
+        {
+            _rigElements[playerSync.PlayerId] = rig;
+            _rigTweens[playerSync.PlayerId] = new RigTween(playerSync);
+            if (debugMode) GD.Print($"[Network] \U0001f9ed XR rig created for remote player (head + 2 hands)");
+        }
+
         if (debugMode) GD.Print($"[Network] \u2705 Remote player '{remotePlayerName}' created successfully");
 
         // Debug: list all root elements
@@ -241,6 +271,25 @@ public class RemotePlayerManager
         {
             // Update target; visual continues from its current interpolated position
             _remoteTweens[playerSync.PlayerId] = curTween with { TargetPosition = targetPos, TargetRotation = targetRot };
+        }
+
+        // ── Update XR rig targets (build the rig if it arrived late) ──
+        if (playerSync.HasRig)
+        {
+            if (!_rigElements.TryGetValue(playerSync.PlayerId, out var parts) || parts == null)
+            {
+                var remote = _root.FindElement(e => e.Name == remotePlayerName);
+                if (remote != null)
+                {
+                    parts = BuildRemoteRig(playerSync, remote);
+                    if (parts != null) _rigElements[playerSync.PlayerId] = parts;
+                }
+            }
+
+            if (_rigTweens.TryGetValue(playerSync.PlayerId, out var rig))
+                rig.SetTargets(playerSync);
+            else
+                _rigTweens[playerSync.PlayerId] = new RigTween(playerSync);
         }
 
         if (debugMode) GD.Print($"[Network] \u2705 Set tween target ({targetPos.X:F2}, {targetPos.Y:F2}, {targetPos.Z:F2})");
@@ -273,10 +322,107 @@ public class RemotePlayerManager
 
             // Clean up tween state for this player
             _remoteTweens.Remove(leaveDto.PlayerId);
+            _rigTweens.Remove(leaveDto.PlayerId);
+            _rigElements.Remove(leaveDto.PlayerId);
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[Network] \u274c Error handling PlayerLeave: {ex.Message}");
+        }
+    }
+
+    // ── Remote XR rig helpers ───────────────────────────────────────────
+
+    private static void TweenRigPart(Dictionary<string, IWorldElement> parts, string partName,
+        ref System.Numerics.Vector3 visPos, ref NumQuaternion visRot,
+        System.Numerics.Vector3 tgtPos, NumQuaternion tgtRot, float t)
+    {
+        if (!parts.TryGetValue(partName, out var part)) return;
+
+        visPos = System.Numerics.Vector3.Lerp(visPos, tgtPos, t);
+        visRot = NumQuaternion.Slerp(visRot, tgtRot, t);
+
+        part.LocalTransform = new TRS
+        {
+            Position = visPos,
+            Rotation = visRot,
+            Scale = System.Numerics.Vector3.One
+        };
+    }
+
+    /// <summary>
+    /// Build the XR rig children (XR_Root → XR_Head / XR_LeftHand / XR_RightHand)
+    /// on a remote player when the sender is in XR mode. Returns a part-name →
+    /// element map used for tweening, or null when the DTO carries no rig.
+    /// </summary>
+    private static Dictionary<string, IWorldElement>? BuildRemoteRig(PlayerSyncDTO dto, IWorldElement remotePlayer)
+    {
+        if (!dto.HasRig) return null;
+
+        var xrRoot = new Element { Name = "XR_Root" };
+        xrRoot.AddComponent(new XRRootComponent());
+        remotePlayer.AddChild(xrRoot);
+
+        var parts = new Dictionary<string, IWorldElement>();
+
+        var head = MakeRigPart("XR_Head", 0.1f, 0.1f, 0.06f);
+        head.AddComponent(new XRHeadComponent());
+        head.LocalTransform = new TRS { Position = dto.HeadPosition, Rotation = dto.HeadRotation, Scale = System.Numerics.Vector3.One };
+        xrRoot.AddChild(head);
+        parts["Head"] = head;
+
+        var left = MakeRigPart("XR_LeftHand", 0.08f, 0.08f, 0.1f);
+        left.AddComponent(new XRHandComponent(HandSide.Left));
+        left.LocalTransform = new TRS { Position = dto.LeftHandPosition, Rotation = dto.LeftHandRotation, Scale = System.Numerics.Vector3.One };
+        xrRoot.AddChild(left);
+        parts["Left"] = left;
+
+        var right = MakeRigPart("XR_RightHand", 0.08f, 0.08f, 0.1f);
+        right.AddComponent(new XRHandComponent(HandSide.Right));
+        right.LocalTransform = new TRS { Position = dto.RightHandPosition, Rotation = dto.RightHandRotation, Scale = System.Numerics.Vector3.One };
+        xrRoot.AddChild(right);
+        parts["Right"] = right;
+
+        return parts;
+    }
+
+    private static Element MakeRigPart(string name, float w, float h, float d)
+    {
+        var e = new Element { Name = name };
+        var mesh = new MeshComponent(MeshShape.Box, w, h, d);
+        e.AddComponent(mesh);
+        e.AddComponent(new MeshRenderer { Mesh = mesh });
+        return e;
+    }
+
+    /// <summary>Interpolation state for a remote player's XR rig (head + hands, local poses).</summary>
+    private sealed class RigTween
+    {
+        public System.Numerics.Vector3 HeadVisPos, HeadTgtPos;
+        public NumQuaternion HeadVisRot, HeadTgtRot;
+        public System.Numerics.Vector3 LeftVisPos, LeftTgtPos;
+        public NumQuaternion LeftVisRot, LeftTgtRot;
+        public System.Numerics.Vector3 RightVisPos, RightTgtPos;
+        public NumQuaternion RightVisRot, RightTgtRot;
+
+        public RigTween(PlayerSyncDTO dto)
+        {
+            HeadVisPos = HeadTgtPos = dto.HeadPosition;
+            HeadVisRot = HeadTgtRot = dto.HeadRotation;
+            LeftVisPos = LeftTgtPos = dto.LeftHandPosition;
+            LeftVisRot = LeftTgtRot = dto.LeftHandRotation;
+            RightVisPos = RightTgtPos = dto.RightHandPosition;
+            RightVisRot = RightTgtRot = dto.RightHandRotation;
+        }
+
+        public void SetTargets(PlayerSyncDTO dto)
+        {
+            HeadTgtPos = dto.HeadPosition;
+            HeadTgtRot = dto.HeadRotation;
+            LeftTgtPos = dto.LeftHandPosition;
+            LeftTgtRot = dto.LeftHandRotation;
+            RightTgtPos = dto.RightHandPosition;
+            RightTgtRot = dto.RightHandRotation;
         }
     }
 }

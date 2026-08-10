@@ -160,6 +160,89 @@ namespace V12TwoDog
         {
         }
 
+        /// <summary>
+        /// Move a kinematic body by <paramref name="delta"/>, sliding along any
+        /// surface it touches (walls stop forward motion, slopes slide you along).
+        /// Uses Godot's <c>BodyTestMotion</c> so kinematic bodies — e.g. the XR
+        /// player capsule — no longer clip through walls. Blocks until the main
+        /// thread has applied the move (same pattern as <see cref="Raycast"/>).
+        /// </summary>
+        public NumVec3 MoveKinematic(IPhysicsBody body, NumVec3 delta)
+        {
+            if (body is not GodotPhysicsBody gb)
+                return delta;
+            if (!gb.BodyRid.IsValid)
+                return delta;
+
+            if (delta.LengthSquared() < 1e-10f)
+                return NumVec3.Zero;
+
+            NumVec3 applied = NumVec3.Zero;
+            bool onMainThread = OS.GetThreadCallerId() == OS.GetMainThreadId();
+
+            if (onMainThread)
+            {
+                applied = ApplyMove(gb, delta);
+            }
+            else
+            {
+                var evt = new ManualResetEventSlim(false);
+                GodotMainThread.Execute(() =>
+                {
+                    try { applied = ApplyMove(gb, delta); }
+                    finally { evt.Set(); }
+                });
+                // Block worker thread until the main thread processes the motion.
+                evt.Wait();
+                evt.Dispose();
+            }
+            return applied;
+        }
+
+        private static NumVec3 ApplyMove(GodotPhysicsBody gb, NumVec3 delta)
+        {
+            var server = PhysicsServer3D.Singleton;
+            var xform = (Transform3D)server.BodyGetState(gb.BodyRid, PhysicsServer3D.BodyState.Transform);
+            var remaining = new Vector3(delta.X, delta.Y, delta.Z);
+            var total = Vector3.Zero;
+
+            // A handful of iterations lets the body slide along surfaces.
+            for (int iter = 0; iter < 4 && remaining.Length() > 1e-4f; iter++)
+            {
+                var p = new PhysicsTestMotionParameters3D
+                {
+                    From = xform,
+                    Motion = remaining,
+                    Margin = 0.001f,
+                    MaxCollisions = 1
+                };
+                var r = new PhysicsTestMotionResult3D();
+                bool collided = server.BodyTestMotion(gb.BodyRid, p, r);
+
+                var travel = r.GetTravel();
+                xform.Origin += travel;
+                total += travel;
+                remaining -= travel;
+
+                if (!collided || remaining.LengthSquared() < 1e-6f)
+                    break;
+
+                var normal = r.GetCollisionNormal(0);
+                if (normal.LengthSquared() < 1e-6f)
+                    break;
+
+                // Reject the motion component along the surface normal (slide).
+                var slide = remaining - normal * remaining.Dot(normal);
+                if (slide.LengthSquared() >= remaining.LengthSquared() - 1e-6f)
+                    break; // no progress — stop to avoid jitter
+                remaining = slide;
+            }
+
+            server.BodySetState(gb.BodyRid, PhysicsServer3D.BodyState.Transform, xform);
+            gb._cachedPosition = new NumVec3(xform.Origin.X, xform.Origin.Y, xform.Origin.Z);
+            return new NumVec3(total.X, total.Y, total.Z);
+        }
+
         public void SyncBodies()
         {
             foreach (var body in _bodies.Values)
@@ -230,7 +313,7 @@ namespace V12TwoDog
 
         // Local caches — read/written from worker thread, synced to Godot on main thread
         internal volatile bool _syncPending = true;
-        private NumVec3 _cachedPosition;
+        internal NumVec3 _cachedPosition;
         private NumQuat _cachedRotation;
         private NumVec3 _cachedVelocity;
 

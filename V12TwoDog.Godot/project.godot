@@ -152,8 +152,8 @@ sensors/enable_gyroscope=true
 
 2d/run_on_separate_thread=true
 3d/run_on_separate_thread=true
-common/physics_ticks_per_second=1000
 common/physics_interpolation=true
+#120Hzphysicsisplenty:therendererinterpolatesbetweenV12's~60fps#snapshots,sothere'snoneedtohammerthesimat1000Hz(andtheQuest's#Adrenodoesn'twantiteither).common/physics_ticks_per_second=120
 
 [rendering]
 
@@ -161,4 +161,8 @@ textures/vram_compression/import_etc2_astc=true
 
 [xr]
 
+openxr/enabled=true
+openxr/extensions/hand_tracking=true
 shaders/enabled=true
+#OpenXRisinitialisedexplicitlybyXRTrackingServiceatruntime(sodesktop#andheadlessrunsdon'thangtryingtoauto-bootOpenXR).Handtrackingis#enabledheresotheextensionisavailablewhentheinterfacecomesup.openxr/extensions/hand_tracking=true
+#OpenXRmuststayenabled:itregisterstheOpenXRinterfacewithXRServer,#whichiswhatrendersstereoVRandwhatXRTrackingServicedrives.Without#itGodotrendersflatandnoXRtrackersexist.#(Note:desktop/headlessrunswithoutaheadsetwilltryOpenXRatstartup.)openxr/enabled=true

@@ -9,6 +9,8 @@
   <Folder Name="/Solution Items/">
     <File Path="readme.md" />
   </Folder>
+  <Folder Name="/V12TwoDog.2dog/" />
+  <Project Path="V12.ConsumerApp/V12.ConsumerApp.csproj" />
   <Project Path="V12.SampleGame/V12.SampleGame.csproj" />
   <Project Path="V12TwoDog.2dog/V12TwoDog.csproj" />
   <Project Path="V12TwoDog.Godot/V12TwoDog.Godot.csproj" />

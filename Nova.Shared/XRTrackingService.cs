@@ -17,8 +17,14 @@ namespace V12TwoDog
         private XRCamera3D _hmdCamera;
         private XRController3D _leftController;
         private XRController3D _rightController;
+        // Optical hand-tracking fallbacks (no controllers). Bound to the
+        // OpenXR hand tracker trackers so hand poses work even when the user
+        // isn't holding controllers.
+        private XRNode3D? _leftHandTracker;
+        private XRNode3D? _rightHandTracker;
         private InputService _inputService;
         private OpenXRInterface _xrInterface;
+        private Renderer _renderer;
         private const float Deadzone = 0.15f;
 
         private IWorldElement _cachedPlayer;
@@ -31,9 +37,25 @@ namespace V12TwoDog
         public bool IsAvailable { get; private set; }
         public XROrigin3D Origin => _origin;
 
-        public XRTrackingService(Node3D parent, InputService inputService)
+        /// <summary>
+        /// The currently-tracked node for each hand (controller when held, else the
+        /// optical hand tracker). Used by visuals (e.g. the pickup laser) so they
+        /// can be parented to / drawn from the hand's real position instead of a
+        /// stale snapshot transform.
+        /// </summary>
+        public Node3D? LeftHandSource => PickHandSource(_leftController, _leftHandTracker);
+        public Node3D? RightHandSource => PickHandSource(_rightController, _rightHandTracker);
+
+        /// <summary>Latest left/right trigger and grip values (0..1), read by network sync.</summary>
+        public float LeftTrigger { get; private set; }
+        public float LeftGrip { get; private set; }
+        public float RightTrigger { get; private set; }
+        public float RightGrip { get; private set; }
+
+        public XRTrackingService(Node3D parent, InputService inputService, Renderer renderer)
         {
             _inputService = inputService;
+            _renderer = renderer;
             Initialize(parent);
         }
 
@@ -62,12 +84,32 @@ namespace V12TwoDog
             _leftController = new XRController3D();
             _leftController.Name = "XR_LeftController";
             _leftController.Tracker = "left_hand";
+            // Default pose: every runtime provides it. (Some runtimes do not
+            // expose the "grip" pose, which made GetIsActive() false and froze
+            // the hands.)
             _origin.AddChild(_leftController);
 
             _rightController = new XRController3D();
             _rightController.Name = "XR_RightController";
             _rightController.Tracker = "right_hand";
             _origin.AddChild(_rightController);
+
+            // Optical hand tracking fallback: when the user isn't holding
+            // controllers, the controller trackers stay idle — the hand poses
+            // come from the OpenXR hand_tracking extension instead.
+            _leftHandTracker = new XRNode3D();
+            _leftHandTracker.Name = "XR_LeftHandTracker";
+            _leftHandTracker.Tracker = "/user/hand_tracker/left";
+            _leftHandTracker.Pose = "default";
+            _leftHandTracker.ShowWhenTracked = true;
+            _origin.AddChild(_leftHandTracker);
+
+            _rightHandTracker = new XRNode3D();
+            _rightHandTracker.Name = "XR_RightHandTracker";
+            _rightHandTracker.Tracker = "/user/hand_tracker/right";
+            _rightHandTracker.Pose = "default";
+            _rightHandTracker.ShowWhenTracked = true;
+            _origin.AddChild(_rightHandTracker);
 
             if (_xrInterface.Initialize())
             {
@@ -77,9 +119,48 @@ namespace V12TwoDog
             }
             else
             {
-                GD.Print("[XRTracking] Failed to initialize OpenXR.");
-                Cleanup();
+                // Keep the origin/camera/controller nodes: they stay inert until
+                // OpenXR comes up. Update() retries periodically, so plugging a
+                // headset in a few seconds after boot still enables VR.
+                GD.Print("[XRTracking] OpenXR not ready yet — will keep retrying while the runtime runs.");
                 IsAvailable = false;
+            }
+        }
+
+        private int _initRetryCounter;
+        private const int InitRetryIntervalFrames = 60;  // ~1s at 60fps
+        private const int InitRetryMaxAttempts = 300;    // ~5 min of retries, then give up
+
+        private void TryDelayedInitialize()
+        {
+            if (_xrInterface == null || IsAvailable) return;
+            if (++_initRetryCounter % InitRetryIntervalFrames != 0) return;
+            if (_initRetryCounter / InitRetryIntervalFrames > InitRetryMaxAttempts) return;
+
+            try
+            {
+                if (_xrInterface.Initialize())
+                {
+                    IsAvailable = true;
+                    if (_origin != null && GodotObject.IsInstanceValid(_origin) && _origin.GetViewport() is { } vp)
+                        vp.UseXR = true;
+
+                    // Register with the GameRoot even though we weren't available
+                    // at boot, so gamepaks/network code that looks up the service
+                    // later (e.g. XR rig sync) can still find it.
+                    try
+                    {
+                        if (GameRoot.Instance != null && GameRoot.Instance.Registry.Get("XRTrackingService") == null)
+                            GameRoot.Instance.Registry.Register("XRTrackingService", this);
+                    }
+                    catch { }
+
+                    GD.Print("[XRTracking] OpenXR initialized successfully (delayed).");
+                }
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[XRTracking] Delayed OpenXR init failed: {ex.Message}");
             }
         }
 
@@ -124,18 +205,83 @@ namespace V12TwoDog
 
         public void Update()
         {
-            if (!IsAvailable) return;
+            if (!IsAvailable)
+            {
+                TryDelayedInitialize();
+                return;
+            }
 
+            // Cache immediately on the first frame (and whenever the cache is
+            // empty) instead of waiting 60 frames — otherwise the hands sit at
+            // the origin for a full second after the player spawns.
             _cacheTimer++;
-            if (_cacheTimer > 60)
+            if (_cacheTimer > 60 || _cachedPlayer == null)
                 CacheTrackedElements();
 
             SyncOriginTransform();
             UpdateElementLocalPose(_hmdCamera, _cachedHead);
-            UpdateElementLocalPose(_leftController, _cachedLeftHand);
-            UpdateElementLocalPose(_rightController, _cachedRightHand);
+            UpdateElementLocalPose(PickHandSource(_leftController, _leftHandTracker), _cachedLeftHand);
+            UpdateElementLocalPose(PickHandSource(_rightController, _rightHandTracker), _cachedRightHand);
+
+            RegisterDirectParents();
 
             PollControllers();
+
+            // ── Periodic diagnostic (wall-clock, ~every 2s) so we can see what
+            // the runtime reports — physics tick rate may be very high so a
+            // frame counter would flood the console. ──
+            ulong now = Time.GetTicksMsec();
+            if (now - _lastDiagMs >= 2000)
+            {
+                _lastDiagMs = now;
+                GD.Print($"[XRDiag] avail={IsAvailable} " +
+                         $"L:ctrl(active={SafeActive(_leftController)},data={SafeData(_leftController)}) " +
+                         $"hand(active={SafeActive(_leftHandTracker)},data={SafeData(_leftHandTracker)}) " +
+                         $"R:ctrl(active={SafeActive(_rightController)},data={SafeData(_rightController)}) " +
+                         $"hand(active={SafeActive(_rightHandTracker)},data={SafeData(_rightHandTracker)})");
+            }
+        }
+
+        private static bool SafeActive(XRNode3D? node) => node != null && GodotObject.IsInstanceValid(node) && node.GetIsActive();
+        private static bool SafeData(XRNode3D? node) => node != null && GodotObject.IsInstanceValid(node) && node.GetHasTrackingData();
+        private ulong _lastDiagMs;
+
+        /// <summary>
+        /// Prefer whichever source has tracking data for this hand: the
+        /// controller when it is tracked (user holds it), else the optical hand
+        /// tracker (bare-hand tracking). Returns null when neither has data so
+        /// the element keeps its last pose instead of snapping to the origin.
+        /// </summary>
+        private static Node3D? PickHandSource(XRController3D? controller, XRNode3D? handTracker)
+        {
+            bool ctrlOk = controller != null && GodotObject.IsInstanceValid(controller)
+                && (controller.GetIsActive() || controller.GetHasTrackingData());
+            bool handOk = handTracker != null && GodotObject.IsInstanceValid(handTracker)
+                && (handTracker.GetIsActive() || handTracker.GetHasTrackingData());
+
+            if (ctrlOk) return controller;
+            if (handOk) return handTracker;
+
+            // Nothing tracked right now — say so rather than writing origin
+            // over the current pose.
+            return null;
+        }
+
+        /// <summary>
+        /// Pin the local player's head/hand render nodes to the actual tracked
+        /// controller/hand nodes so the visual boxes sit exactly on the hands with
+        /// zero latency (the snapshot + interpolation pipeline lags by a frame or
+        /// two otherwise). Passing null as the source releases the pin, falling
+        /// back to snapshot rendering at the last written pose.
+        /// </summary>
+        private void RegisterDirectParents()
+        {
+            if (_cachedHead != null)
+                _renderer.SetDirectParent(_cachedHead.Id, _hmdCamera);
+            if (_cachedLeftHand != null)
+                _renderer.SetDirectParent(_cachedLeftHand.Id, LeftHandSource);
+            if (_cachedRightHand != null)
+                _renderer.SetDirectParent(_cachedRightHand.Id, RightHandSource);
         }
 
         private void SyncOriginTransform()
@@ -158,7 +304,7 @@ namespace V12TwoDog
             _origin.Quaternion = new global::Godot.Quaternion(Vector3.Up, yaw);
         }
 
-        private void UpdateElementLocalPose(Node3D source, IWorldElement target)
+        private void UpdateElementLocalPose(Node3D? source, IWorldElement target)
         {
             if (source == null || target == null) return;
 
@@ -213,9 +359,17 @@ namespace V12TwoDog
 
             string prefix = $"xr_{side}_";
             if (name == "trigger")
+            {
+                if (side == "left") LeftTrigger = val;
+                else RightTrigger = val;
                 SendAxis(prefix + "trigger", val);
+            }
             else if (name == "grip")
+            {
+                if (side == "left") LeftGrip = val;
+                else RightGrip = val;
                 SendAxis(prefix + "grip", val);
+            }
         }
 
         private void PollButton(XRController3D ctrl, string side, string name)
@@ -357,7 +511,18 @@ namespace V12TwoDog
 
         public void Cleanup()
         {
-            if (_xrInterface != null)
+            // Release direct-parent pins so the renderer falls back to snapshot
+            // rendering (or frees cleanly) after XR shuts down.
+            if (_renderer != null)
+            {
+                if (_cachedHead != null) _renderer.SetDirectParent(_cachedHead.Id, null);
+                if (_cachedLeftHand != null) _renderer.SetDirectParent(_cachedLeftHand.Id, null);
+                if (_cachedRightHand != null) _renderer.SetDirectParent(_cachedRightHand.Id, null);
+            }
+
+            // Only uninitialize if we actually got OpenXR up — otherwise the
+            // native side complains about a null openxr_api on shutdown.
+            if (_xrInterface != null && IsAvailable)
             {
                 try { _xrInterface.Uninitialize(); } catch { }
             }

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 2dog build glue: native libgodot + GodotSharp land in THIS project's
+         output (project references don't flow the package's native items).
+         The two properties below are read by 2dog's targets. -->
+    <GodotProjectDir>../V12TwoDog.Godot</GodotProjectDir>
+    <TwoDogRemoveDuplicateGodotAnalyzers>true</TwoDogRemoveDuplicateGodotAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The 2dog host library brings in twodog.Engine + all V12 projects
+         (V12.Basic, Nova.SDK, Nova.Shared, V12TwoDog.Godot, V12.SampleGame).
+         The Sample Game is auto-started by RootLoop via ProjectReference — no
+         gamepak DLL scanning/copying needed. -->
+    <ProjectReference Include="..\V12TwoDog.2dog\V12TwoDog.csproj" />
+    <PackageReference Include="2dog.engine" Version="4.7.1.*" />
+  </ItemGroup>
+
+</Project>

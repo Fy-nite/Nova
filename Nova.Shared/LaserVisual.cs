@@ -10,9 +10,14 @@ public class LaserVisual
 {
     private MeshInstance3D _laserLine;
     private MeshInstance3D _laserHit;
+    private Node3D _defaultParent = null!;
+    private Node3D? _laserParent;
 
     public void Initialize(Node3D parent)
     {
+        _defaultParent = parent;
+        _laserParent = parent;
+
         _laserLine = new MeshInstance3D();
         _laserLine.Name = "LaserLine";
         _laserLine.Mesh = new ImmediateMesh();
@@ -36,12 +41,35 @@ public class LaserVisual
         parent.AddChild(_laserHit);
     }
 
-    public void Update(PickupSystem pickup)
+    public void Update(PickupSystem pickup, Node3D? rightHand = null)
     {
         if (pickup == null || !pickup.HasRay) return;
 
         var origin = new Vector3(pickup.RayOrigin.X, pickup.RayOrigin.Y, pickup.RayOrigin.Z);
         var hit = new Vector3(pickup.RayHitPoint.X, pickup.RayHitPoint.Y, pickup.RayHitPoint.Z);
+
+        // When the right hand is tracked, parent the laser to it and express the
+        // line in the hand's local space. The laser then emanates from the hand
+        // exactly, instead of from where the hand was a few snapshot frames ago.
+        Node3D targetParent = _defaultParent;
+        if (rightHand != null && GodotObject.IsInstanceValid(rightHand) && rightHand.IsInsideTree())
+        {
+            targetParent = rightHand;
+            origin = Vector3.Zero;
+            hit = rightHand.ToLocal(hit);
+        }
+
+        if (_laserParent != targetParent)
+        {
+            // Reparent preserves the global transform by default, which would
+            // offset the meshes under the new parent — reset to identity local so
+            // the mesh's own vertex positions (origin/hit, in local space) rule.
+            _laserLine.Reparent(targetParent);
+            _laserHit.Reparent(targetParent);
+            _laserLine.Transform = Transform3D.Identity;
+            _laserHit.Transform = Transform3D.Identity;
+            _laserParent = targetParent;
+        }
 
         if (_laserLine.Mesh is ImmediateMesh im)
         {

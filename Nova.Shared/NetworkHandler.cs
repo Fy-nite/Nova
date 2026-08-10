@@ -3,10 +3,13 @@ using Godot;
 using System;
 using System.Collections.Concurrent;
 using V12.Basic.Components;
+using V12.Components;
 using V12.Components.Renderables;
 using V12.Core;
+using V12.Core.Core.Interfaces;
 using V12.Core.NetworkCable;
 using V12.Core.Networking;
+using V12TwoDog;
 
 /// <summary>
 /// Orchestrates network message dispatch, player sync, and heartbeat timers.
@@ -172,6 +175,76 @@ public class NetworkHandler
 
     // ── Player sync ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Walk the Player element's XR_Root → head/hand children and copy their
+    /// local poses into the sync DTO, plus the live controller analog state.
+    /// Desktop players (no XR_Root) leave <see cref="PlayerSyncDTO.HasRig"/> false.
+    /// </summary>
+    private void CapturePlayerRig(PlayerSyncDTO syncDto, IWorldElement player)
+    {
+        try
+        {
+            IWorldElement? xrRoot = null;
+            if (player.Children != null)
+            {
+                foreach (var child in player.Children)
+                {
+                    if (child.GetComponent<XRRootComponent>() != null)
+                    {
+                        xrRoot = child;
+                        break;
+                    }
+                }
+            }
+
+            if (xrRoot?.Children == null) return;
+
+            foreach (var child in xrRoot.Children)
+            {
+                if (child.GetComponent<XRHeadComponent>() != null)
+                {
+                    syncDto.HasRig = true;
+                    syncDto.HeadPosition = child.LocalTransform.Position;
+                    syncDto.HeadRotation = child.LocalTransform.Rotation;
+                }
+                else if (child.GetComponent<XRHandComponent>() is { } hand)
+                {
+                    syncDto.HasRig = true;
+                    if (hand.Side == HandSide.Left)
+                    {
+                        syncDto.LeftHandPosition = child.LocalTransform.Position;
+                        syncDto.LeftHandRotation = child.LocalTransform.Rotation;
+                    }
+                    else
+                    {
+                        syncDto.RightHandPosition = child.LocalTransform.Position;
+                        syncDto.RightHandRotation = child.LocalTransform.Rotation;
+                    }
+                }
+            }
+
+            // ── Controller analog state (local input broadcast to peers) ──
+            var xr = _root.Registry.Get<XRTrackingService>("XRTrackingService");
+            if (xr != null)
+            {
+                syncDto.LeftTrigger = xr.LeftTrigger;
+                syncDto.LeftGrip = xr.LeftGrip;
+                syncDto.RightTrigger = xr.RightTrigger;
+                syncDto.RightGrip = xr.RightGrip;
+            }
+
+            if (_debugMode && syncDto.HasRig)
+            {
+                GD.Print($"[Network] \U0001f9ed Rig captured — head=({syncDto.HeadPosition.X:F2},{syncDto.HeadPosition.Y:F2},{syncDto.HeadPosition.Z:F2}), " +
+                         $"L=({syncDto.LeftHandPosition.X:F2},...), R=({syncDto.RightHandPosition.X:F2},...)");
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[Network] \u274c Failed to capture player rig: {ex.Message}");
+        }
+    }
+
     public void SendPlayerDataToServer()
     {
         var player = _root.Player;
@@ -236,6 +309,9 @@ public class NetworkHandler
             }
 
             if (_debugMode) GD.Print($"[Network] \U0001f4e6 Total components serialized: {syncDto.Components.Count}");
+
+            // ── XR rig: head + hand poses (local to the player element) ──
+            CapturePlayerRig(syncDto, player);
 
             var message = new MessageDTO
             {
