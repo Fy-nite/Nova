@@ -50,6 +50,36 @@ namespace V12TwoDog
 		// instead of lagging behind the 60Hz snapshot + interpolation pipeline.
 		private readonly Dictionary<long, Node3D> _directParents = new();
 
+		// ── UI scene viewports ──
+		// Viewport element id → SubViewport, registered by WorldCanvasSystem.
+		// Elements whose snapshot carries that ViewportId get reparented inside
+		// the SubViewport (an editor's GameView panel), so each viewport is its
+		// own 3D scene with its own camera.
+		private readonly Dictionary<long, SubViewport> _sceneViewports = new();
+
+		/// <summary>Register a SubViewport that scene elements with the matching
+		/// ViewportId should render into.</summary>
+		public void RegisterSceneViewport(long viewportId, SubViewport viewport)
+		{
+			_sceneViewports[viewportId] = viewport;
+		}
+
+		/// <summary>Remove a SubViewport registration (its widget was destroyed).</summary>
+		public void UnregisterSceneViewport(long viewportId)
+		{
+			_sceneViewports.Remove(viewportId);
+		}
+
+		/// <summary>True when the given viewport has a snapshot camera marked
+		/// current this frame. WorldCanvasSystem uses this to decide whether the
+		/// fallback editor camera should stay active.</summary>
+		public bool HasCurrentCamera(long viewportId)
+		{
+			return _currentCamerasByViewport.Contains(viewportId);
+		}
+
+		private readonly HashSet<long> _currentCamerasByViewport = new();
+
 		/// <summary>
 		/// Parent an element's render node directly under <paramref name="parent"/>,
 		/// bypassing the snapshot hierarchy and snapshot interpolation. Pass null to
@@ -274,6 +304,7 @@ namespace V12TwoDog
 			if (snapshot == null) return;
 
 			var currentIds = new HashSet<long>();
+			_currentCamerasByViewport.Clear();
 
 			// ── Pass 1: Create all nodes (temporarily parented to root) ──
 			foreach (var rs in snapshot.Renderables)
@@ -288,6 +319,12 @@ namespace V12TwoDog
 					root.CurrentScene.AddChild(node);
 					_nodesByElementId[rs.ElementId] = node;
 				}
+
+				// Track which viewports have a current camera this frame. Done here
+				// (not pass 2) so the fast path can't skip the bookkeeping on
+				// unchanged camera nodes.
+				if (rs.NodeType == SnapshotNodeType.Camera && rs.IsCurrentCamera)
+					_currentCamerasByViewport.Add(rs.ViewportId);
 			}
 
 			// ── Pass 2: Set parent-child hierarchy and local transforms ──
@@ -296,15 +333,37 @@ namespace V12TwoDog
 				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node)) continue;
 
 				// Fast path: when this element's snapshot is identical to the last
-				// one we applied and no glide is in flight, the Godot node is
-				// already settled — skip it entirely. This avoids the per-frame
+				// one we applied, no glide is in flight, the node isn't directly
+				// driven, and it's still parented where it belongs, the Godot node
+				// is already settled — skip it entirely. This avoids the per-frame
 				// Basis/Transform3D rebuild, the interpolation bookkeeping and the
 				// property re-application (notably SVG re-rasterization) for every
 				// node that didn't actually change. Directly-driven nodes (e.g. the
 				// XR rig) always run the full path so their identity-reset wins.
 				bool snapshotChanged = !(_appliedSnapshots.TryGetValue(rs.ElementId, out var prevSnapshot)
 					&& RenderableSnapshotEquals(prevSnapshot, rs));
-				if (!snapshotChanged && !_nodeAnims.ContainsKey(rs.ElementId) && !_directParents.ContainsKey(rs.ElementId))
+				bool parentOk = true;
+				if (!snapshotChanged)
+				{
+					// Cheap parent check: the fast path must not skip a node that
+					// needs reparenting (e.g. a SubViewport was just registered, or
+					// a direct-parent binding was released).
+					Node expectedParent;
+					if (_directParents.TryGetValue(rs.ElementId, out var directParentCheck))
+						expectedParent = directParentCheck;
+					else if (rs.ParentId != 0
+						&& _nodesByElementId.TryGetValue(rs.ParentId, out var parentNodeCheck)
+						&& GodotObject.IsInstanceValid(parentNodeCheck))
+						expectedParent = parentNodeCheck;
+					else if (rs.ViewportId != 0
+						&& _sceneViewports.TryGetValue(rs.ViewportId, out var viewportCheck)
+						&& GodotObject.IsInstanceValid(viewportCheck))
+						expectedParent = viewportCheck;
+					else
+						expectedParent = root.CurrentScene;
+					parentOk = node.GetParent() == expectedParent;
+				}
+				if (!snapshotChanged && parentOk && !_nodeAnims.ContainsKey(rs.ElementId) && !_directParents.ContainsKey(rs.ElementId))
 					continue;
 				if (snapshotChanged)
 					_appliedSnapshots[rs.ElementId] = rs;
@@ -328,6 +387,13 @@ namespace V12TwoDog
 					&& GodotObject.IsInstanceValid(parentNode))
 				{
 					targetParent = parentNode;
+				}
+				else if (rs.ViewportId != 0
+					&& _sceneViewports.TryGetValue(rs.ViewportId, out var sceneViewport)
+					&& GodotObject.IsInstanceValid(sceneViewport))
+				{
+					// Root of a viewport subtree: render inside the UI's SubViewport.
+					targetParent = sceneViewport;
 				}
 
 				if (node.GetParent() != targetParent)
@@ -427,6 +493,18 @@ namespace V12TwoDog
 				_nodeLastTargets.Remove(id);
 				_appliedSnapshots.Remove(id);
 			}
+
+			// ── Turn off Camera3D in viewports without a current camera ──
+			// Each viewport (0 = main screen, N = UI SubViewport) renders with
+			// its own camera. A camera in a viewport that has no current camera
+			// this frame is disabled so the fallback/Godot default camera wins.
+			foreach (var kvp in _nodesByElementId)
+			{
+				if (!GodotObject.IsInstanceValid(kvp.Value) || kvp.Value is not Camera3D cam) continue;
+				long vp = _appliedSnapshots.TryGetValue(kvp.Key, out var lastRs) ? lastRs.ViewportId : 0;
+				if (!_currentCamerasByViewport.Contains(vp))
+					cam.Current = false;
+			}
 		}
 
 		/// <summary>
@@ -439,6 +517,7 @@ namespace V12TwoDog
 		private static bool RenderableSnapshotEquals(RenderableSnapshot a, RenderableSnapshot b)
 		{
 			if (a.ParentId != b.ParentId || a.NodeType != b.NodeType) return false;
+			if (a.ViewportId != b.ViewportId) return false;
 			if (a.HasLocalTransform != b.HasLocalTransform || a.IsWorldLocked != b.IsWorldLocked) return false;
 			if (a.Transform != b.Transform || a.LocalTransform != b.LocalTransform) return false;
 

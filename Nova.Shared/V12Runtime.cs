@@ -319,7 +319,7 @@ namespace V12TwoDog
                 AfterGamepakStart();
 
             _laserVisual.Initialize(_host);
-            _worldCanvas = new WorldCanvasSystem(_host);
+            _worldCanvas = new WorldCanvasSystem(_host, (global::V12TwoDog.Renderer)RendererService);
 
             if (XrAvailable != true && RendererService?.LockMouse == true && _options.LockMouseOnStart)
                 SetMouseCaptured(true);
