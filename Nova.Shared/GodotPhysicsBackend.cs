@@ -13,14 +13,17 @@ namespace V12TwoDog
     {
         private readonly PhysicsServer3DInstance _server;
         private readonly Rid _space;
+        private readonly Node3D _charRoot;
         private readonly Dictionary<long, GodotPhysicsBody> _bodies = new();
         private readonly Dictionary<Rid, long> _ridToBody = new();
         private long _nextId;
 
-        public GodotPhysicsBackend(World3D world3d)
+        public GodotPhysicsBackend(Node rootNode)
         {
             _server = PhysicsServer3D.Singleton;
-            _space = world3d.GetSpace();
+            _space = rootNode.GetTree().Root.World3D.GetSpace();
+            _charRoot = new Node3D { Name = "CharacterControllers" };
+            rootNode.AddChild(_charRoot);
         }
 
         public IPhysicsBody CreateBody(in PhysicsBodyDesc desc)
@@ -35,6 +38,36 @@ namespace V12TwoDog
 
             GodotMainThread.Execute(() =>
             {
+                if (descCopy.IsCharacterController)
+                {
+                    var charNode = new CharacterBody3D
+                    {
+                        Name = "XRCharacterController",
+                        FloorSnapLength = 0.1f,
+                        FloorMaxAngle = Mathf.DegToRad(45f)
+                    };
+                    _charRoot.AddChild(charNode);
+
+                    var capsule = new CapsuleShape3D
+                    {
+                        Radius = descCopy.Size.X * 0.5f,
+                        Height = descCopy.Size.Y
+                    };
+                    var shapeNode = new CollisionShape3D { Shape = capsule };
+                    charNode.AddChild(shapeNode);
+
+                    charNode.GlobalPosition = new Vector3(descCopy.Position.X, descCopy.Position.Y, descCopy.Position.Z);
+                    if (descCopy.Rotation.LengthSquared() > 0f)
+                    {
+                        var r = new Quaternion(descCopy.Rotation.X, descCopy.Rotation.Y, descCopy.Rotation.Z, descCopy.Rotation.W);
+                        charNode.GlobalRotation = r.GetEuler();
+                    }
+
+                    body.CharNode = charNode;
+                    body._syncPending = false;
+                    return;
+                }
+
                 var bodyRid = _server.BodyCreate();
                 _server.BodySetSpace(bodyRid, _space);
 
@@ -73,6 +106,8 @@ namespace V12TwoDog
                 _bodies.Remove(gb.Id);
                 GodotMainThread.Execute(() =>
                 {
+                    if (gb.CharNode != null)
+                        gb.CharNode.QueueFree();
                     if (gb.BodyRid.IsValid)
                         lock (_ridToBody) { _ridToBody.Remove(gb.BodyRid); }
                     if (gb.ShapeRid.IsValid)
@@ -260,6 +295,32 @@ namespace V12TwoDog
                 body.ReadbackFromGodot();
         }
 
+        /// <summary>
+        /// Advance all character controllers. MUST be called on the main thread
+        /// (once per physics tick). Each controller applies the velocity the
+        /// worker thread last wrote via <see cref="IPhysicsBody.LinearVelocity"/>
+        /// and runs Godot's <c>move_and_slide()</c>, which resolves collisions
+        /// against the static floor/boxes created through the physics server.
+        /// The resulting position + floor state are cached for the worker thread.
+        /// </summary>
+        public void StepCharacterControllers(float deltaTime)
+        {
+            foreach (var body in _bodies.Values)
+            {
+                var charNode = body.CharNode;
+                if (charNode == null)
+                    continue;
+
+                charNode.Velocity = new Vector3(
+                    body.LinearVelocity.X, body.LinearVelocity.Y, body.LinearVelocity.Z);
+                charNode.MoveAndSlide();
+
+                var pos = charNode.GlobalPosition;
+                body._cachedPosition = new NumVec3(pos.X, pos.Y, pos.Z);
+                body._isOnFloor = charNode.IsOnFloor();
+            }
+        }
+
         private Rid CreateShapeRid(MeshShape shape, NumVec3 size)
         {
             Rid rid;
@@ -310,6 +371,11 @@ namespace V12TwoDog
         public Rid ShapeRid { get; set; }
         public float GravityScale { get; set; } = 1f;
         public bool IsDynamic { get; set; } = true;
+        /// <summary>Live scene node when this body is a character controller (otherwise null).</summary>
+        public CharacterBody3D? CharNode { get; set; }
+        public bool IsCharacterController => CharNode != null;
+        public bool IsOnFloor => _isOnFloor;
+        internal bool _isOnFloor;
 
         // Local caches — read/written from worker thread, synced to Godot on main thread
         internal volatile bool _syncPending = true;
@@ -332,7 +398,8 @@ namespace V12TwoDog
             set
             {
                 _cachedPosition = value;
-                EnqueueSync();
+                if (CharNode == null)
+                    EnqueueSync();
             }
         }
 
@@ -342,7 +409,8 @@ namespace V12TwoDog
             set
             {
                 _cachedRotation = value;
-                EnqueueSync();
+                if (CharNode == null)
+                    EnqueueSync();
             }
         }
 
@@ -352,7 +420,8 @@ namespace V12TwoDog
             set
             {
                 _cachedVelocity = value;
-                EnqueueSync();
+                if (CharNode == null)
+                    EnqueueSync();
             }
         }
 

@@ -130,10 +130,18 @@ namespace V12.SampleGame
             {
                 player.AddComponent(new VRPlayerComponent());
 
-                // Give the XR player a physics presence. A kinematic body follows
-                // the element transform (which PlayerComponent drives via
-                // thumbstick locomotion) while still occupying the world: pickup
-                // raycasts can exclude it and dynamic bodies collide with it.
+                // XR character controller: a kinematic capsule driven by
+                // LocomotionComponent.Velocity — head-relative movement with
+                // gravity, jump and wall-sliding (see PlayerComponent +
+                // PhysicsLocomotionSystem).
+                player.AddComponent(new LocomotionComponent
+                {
+                    MoveSpeed = 4f,
+                    JumpStrength = 6f,
+                    Gravity = 20f,
+                    CanJump = true,
+                    Acceleration = 12f
+                });
                 player.AddComponent(new ColliderComponent(MeshShape.Capsule, 0.6f, 1f, 0.6f));
                 player.AddComponent(new PhysicsBodyComponent { IsKinematic = true });
             }

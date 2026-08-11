@@ -37,6 +37,12 @@ namespace V12TwoDog
         private bool _inputRegistered;
         private volatile bool _interactRequested;
 
+        // Continuous hover/drag interaction state for world-space canvases.
+        private WidgetNode? _hoveredWidget;
+        private WidgetNode? _grabbedWidget;   // slider being dragged, if any
+        private CanvasNode? _grabCanvas;
+        private bool _interactHeld;
+
         public WorldCanvasSystem(Node3D host)
         {
             _host = host;
@@ -48,6 +54,9 @@ namespace V12TwoDog
         /// </summary>
         public void Dispose()
         {
+            SetHover(null);
+            _grabbedWidget = null;
+            _grabCanvas = null;
             foreach (var cn in _canvases.Values)
                 cn.Free();
             _canvases.Clear();
@@ -100,16 +109,25 @@ namespace V12TwoDog
                 _canvases[id].Free();
                 _canvases.Remove(id);
             }
-
             // ── Interaction: raycast the aim ray against world canvases ──
             EnsureInputRegistered();
-            HandleInteract();
+            UpdateInteraction();
         }
 
         public void OnInputEvent(V12.Core.Input.InputEvent evt)
         {
-            if (evt.Type == InputEventType.ButtonDown && evt.Name == "interact")
+            if (evt.Name != "interact") return;
+            if (evt.Type == InputEventType.ButtonDown)
+            {
                 _interactRequested = true;
+                _interactHeld = true;
+            }
+            else if (evt.Type == InputEventType.ButtonUp)
+            {
+                _interactHeld = false;
+                _grabbedWidget = null;
+                _grabCanvas = null;
+            }
         }
 
         private void EnsureInputRegistered()
@@ -121,28 +139,65 @@ namespace V12TwoDog
             _inputRegistered = true;
         }
 
-        private void HandleInteract()
+        /// <summary>
+        /// Called once per frame. Casts the player's aim ray against every
+        /// world-space canvas, tracks the hovered widget (with visual feedback)
+        /// and handles presses/drags.
+        /// </summary>
+        private void UpdateInteraction()
         {
-            if (!_interactRequested) return;
-            _interactRequested = false;
+            if (_gameRoot == null) return;
 
             var playerEl = _gameRoot.FindElementWithComponent<V12.Basic.Components.PlayerComponent>();
-            if (playerEl == null) return;
+            if (playerEl == null)
+            {
+                SetHover(null);
+                return;
+            }
             var aim = playerEl.GetComponent<V12.Basic.Components.PlayerComponent>().GetAimRay();
             var origin = new Vector3(aim.origin.X, aim.origin.Y, aim.origin.Z);
             var dir = new Vector3(aim.direction.X, aim.direction.Y, aim.direction.Z);
 
+            // While a slider is grabbed, keep dragging it even if the aim ray
+            // drifts off the widget (same feel as a mouse-held scrollbar).
+            if (_interactHeld && _grabbedWidget != null && _grabCanvas != null)
+            {
+                if (RaycastCanvas(_grabCanvas, origin, dir, RayLength, out var dragLocal))
+                    SetSliderFromLocal(_grabbedWidget, dragLocal);
+                else if (Mathf.Abs(_grabCanvas.Root3D.GlobalPosition.DistanceTo(origin)) > RayLength)
+                    SetSliderFromLocal(_grabbedWidget, new Vector2(_grabCanvas.Width, 0));
+                return;
+            }
+
+            var hovered = PickWidget(origin, dir, out var localPoint, out var canvas);
+            SetHover(hovered);
+
+            if (!_interactRequested || hovered == null) return;
+            _interactRequested = false;
+            PressWidget(hovered, canvas, localPoint);
+        }
+
+        /// <summary>
+        /// Raycast the aim ray against all world canvases and return the first
+        /// interactive widget hit (button, toggle, checkbox or slider).
+        /// </summary>
+        private WidgetNode? PickWidget(Vector3 origin, Vector3 dir, out Vector2 localPoint, out CanvasNode? canvas)
+        {
+            localPoint = default;
+            canvas = null;
             foreach (var cn in _canvases.Values)
             {
                 if (cn.ScreenSpace || cn.Root3D == null) continue;
                 if (!RaycastCanvas(cn, origin, dir, RayLength, out var local)) continue;
-                var btn = HitTestButton(cn, local);
-                if (btn != null)
+                var wn = HitTestWidget(cn, local);
+                if (wn != null)
                 {
-                    InvokeClick(btn);
-                    break;
+                    canvas = cn;
+                    localPoint = local;
+                    return wn;
                 }
             }
+            return null;
         }
 
         private static bool RaycastCanvas(CanvasNode cn, Vector3 origin, Vector3 dir, float maxDist, out Vector2 localPoint)
@@ -161,17 +216,110 @@ namespace V12TwoDog
             return true;
         }
 
-        private static WidgetNode? HitTestButton(CanvasNode cn, Vector2 localPoint)
+        private static bool IsInteractive(string kind) =>
+            kind is "button" or "toggle" or "checkbox" or "slider";
+
+        private static WidgetNode? HitTestWidget(CanvasNode cn, Vector2 localPoint)
         {
             foreach (var wn in cn.Widgets.Values)
             {
-                if (wn.Kind != "button" || wn.Root3D == null || wn.Element == null) continue;
+                if (!IsInteractive(wn.Kind) || wn.Root3D == null || wn.Element == null) continue;
                 var pos = wn.Root3D.Position;
                 var size = Measure(wn.Element);
                 if (Mathf.Abs(localPoint.X - pos.X) <= size.X / 2f && Mathf.Abs(localPoint.Y - pos.Y) <= size.Y / 2f)
                     return wn;
             }
             return null;
+        }
+
+        private void SetHover(WidgetNode? wn)
+        {
+            if (_hoveredWidget == wn) return;
+            if (_hoveredWidget != null)
+                ApplyHoverVisual(_hoveredWidget, false);
+            _hoveredWidget = wn;
+            if (_hoveredWidget != null)
+                ApplyHoverVisual(_hoveredWidget, true);
+        }
+
+        private static void ApplyHoverVisual(WidgetNode wn, bool hovered)
+        {
+            switch (wn.Kind)
+            {
+                case "button":
+                    if (wn.RectMat != null)
+                        wn.RectMat.AlbedoColor = hovered
+                            ? new Color(0.35f, 0.58f, 0.98f)
+                            : new Color(0.22f, 0.45f, 0.85f);
+                    break;
+                case "toggle":
+                case "checkbox":
+                    if (wn.TrackMat != null)
+                        wn.TrackMat.AlbedoColor = hovered
+                            ? new Color(0.38f, 0.38f, 0.46f)
+                            : new Color(0.25f, 0.25f, 0.3f);
+                    break;
+                case "slider":
+                    if (wn.HandleMat != null)
+                        wn.HandleMat.AlbedoColor = hovered
+                            ? new Color(1f, 1f, 1f)
+                            : new Color(0.85f, 0.85f, 0.9f);
+                    break;
+            }
+        }
+
+        private void PressWidget(WidgetNode wn, CanvasNode? cn, Vector2 localPoint)
+        {
+            switch (wn.Kind)
+            {
+                case "button":
+                    InvokeClick(wn);
+                    break;
+                case "toggle":
+                {
+                    var t = wn.Element?.GetComponent<ToggleComponent>();
+                    if (t != null)
+                    {
+                        t.IsOn = !t.IsOn;
+                        try { t.OnToggled?.Invoke(t.IsOn); } catch { }
+                        if (cn != null) ApplyVisualState(cn, wn, wn.Element);
+                    }
+                    break;
+                }
+                case "checkbox":
+                {
+                    var c = wn.Element?.GetComponent<CheckboxComponent>();
+                    if (c != null)
+                    {
+                        c.Checked = !c.Checked;
+                        try { c.OnChanged?.Invoke(c.Checked); } catch { }
+                        if (cn != null) ApplyVisualState(cn, wn, wn.Element);
+                    }
+                    break;
+                }
+                case "slider":
+                    _grabbedWidget = wn;
+                    _grabCanvas = cn;
+                    SetSliderFromLocal(wn, localPoint);
+                    break;
+            }
+        }
+
+        private void SetSliderFromLocal(WidgetNode wn, Vector2 localPoint)
+        {
+            var s = wn.Element?.GetComponent<SliderComponent>();
+            if (s == null) return;
+            var size = Measure(wn.Element);
+            float t = Mathf.Clamp((localPoint.X + size.X / 2f) / Mathf.Max(size.X, 0.0001f), 0f, 1f);
+            float value = s.Min + t * (s.Max - s.Min);
+            if (s.Step > 0f)
+                value = Mathf.Round(value / s.Step) * s.Step;
+            value = Mathf.Clamp(value, s.Min, s.Max);
+            if (Mathf.Abs(value - s.Value) > 0.0001f)
+            {
+                s.Value = value;
+                try { s.OnChanged?.Invoke(value); } catch { }
+            }
         }
 
         private static void InvokeClick(WidgetNode wn)
@@ -316,6 +464,13 @@ namespace V12TwoDog
             }
             foreach (var id in toRemove)
             {
+                if (_hoveredWidget?.ElementId == id)
+                    SetHover(null);
+                if (_grabbedWidget?.ElementId == id)
+                {
+                    _grabbedWidget = null;
+                    _grabCanvas = null;
+                }
                 cn.Widgets[id].Free(cn.ScreenSpace);
                 cn.Widgets.Remove(id);
             }
@@ -577,7 +732,12 @@ namespace V12TwoDog
                     if (wn.RectMat != null)
                     {
                         bool pressed = legacy?.Pressed ?? false;
-                        wn.RectMat.AlbedoColor = pressed ? new Color(0.1f, 0.3f, 0.6f) : new Color(0.22f, 0.45f, 0.85f);
+                        if (wn.Hovered)
+                            wn.RectMat.AlbedoColor = new Color(0.35f, 0.58f, 0.98f);
+                        else if (pressed)
+                            wn.RectMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f);
+                        else
+                            wn.RectMat.AlbedoColor = new Color(0.22f, 0.45f, 0.85f);
                     }
                     break;
                 }
@@ -614,6 +774,10 @@ namespace V12TwoDog
                     t = Mathf.Clamp(t, 0f, 1f);
                     if (wn.Handle != null)
                         wn.Handle.Position = new Vector3(-size.X / 2 + size.X * t, 0, 0.001f);
+                    if (wn.HandleMat != null)
+                        wn.HandleMat.AlbedoColor = wn.Hovered
+                            ? new Color(1f, 1f, 1f)
+                            : new Color(0.85f, 0.85f, 0.9f);
                     break;
                 }
                 case "textinput":
@@ -981,6 +1145,7 @@ namespace V12TwoDog
             public long ElementId;
             public string Kind = "";
             public IWorldElement Element;
+            public bool Hovered;
 
             public Node3D Root3D;
             public Control RootControl;

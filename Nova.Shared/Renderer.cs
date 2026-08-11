@@ -32,6 +32,15 @@ namespace V12TwoDog
 		}
 		private readonly Dictionary<long, NodeAnim> _nodeAnims = new();
 		private readonly Dictionary<long, Transform3D> _nodeLastTargets = new();
+		// Last applied snapshot per element, used to skip nodes whose render
+		// state is unchanged (no matrix rebuild, no interpolation, no property
+		// re-application such as SVG re-rasterization).
+		private readonly Dictionary<long, RenderableSnapshot> _appliedSnapshots = new();
+		// Rasterized SVG textures keyed by content hash. SVG content is parsed and
+		// rasterized once per distinct document instead of every applied frame.
+		// A hit is verified against the stored content string, so a (rare) hash
+		// collision just causes a re-rasterize, never a wrong texture.
+		private readonly Dictionary<int, (string Content, Texture2D Texture)> _svgTextureCache = new();
 		private const float TeleportThreshold = 10f; // snap on jumps bigger than this
 
 		// ── Directly-driven elements ──
@@ -286,6 +295,20 @@ namespace V12TwoDog
 			{
 				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node)) continue;
 
+				// Fast path: when this element's snapshot is identical to the last
+				// one we applied and no glide is in flight, the Godot node is
+				// already settled — skip it entirely. This avoids the per-frame
+				// Basis/Transform3D rebuild, the interpolation bookkeeping and the
+				// property re-application (notably SVG re-rasterization) for every
+				// node that didn't actually change. Directly-driven nodes (e.g. the
+				// XR rig) always run the full path so their identity-reset wins.
+				bool snapshotChanged = !(_appliedSnapshots.TryGetValue(rs.ElementId, out var prevSnapshot)
+					&& RenderableSnapshotEquals(prevSnapshot, rs));
+				if (!snapshotChanged && !_nodeAnims.ContainsKey(rs.ElementId) && !_directParents.ContainsKey(rs.ElementId))
+					continue;
+				if (snapshotChanged)
+					_appliedSnapshots[rs.ElementId] = rs;
+
 				// Re-parent to element parent's node (or root)
 				Node targetParent = root.CurrentScene;
 				bool directParented = false;
@@ -402,7 +425,52 @@ namespace V12TwoDog
 				_nodesByElementId.Remove(id);
 				_nodeAnims.Remove(id);
 				_nodeLastTargets.Remove(id);
+				_appliedSnapshots.Remove(id);
 			}
+		}
+
+		/// <summary>
+		/// True when two snapshots for the same element describe identical render
+		/// state. Compares every field that <see cref="UpdateNodeProperties"/> and
+		/// the transform pass consume. Strings and mesh arrays are compared by
+		/// value/reference respectively — mesh arrays are only ever replaced (never
+		/// mutated in place), so reference equality is a safe proxy.
+		/// </summary>
+		private static bool RenderableSnapshotEquals(RenderableSnapshot a, RenderableSnapshot b)
+		{
+			if (a.ParentId != b.ParentId || a.NodeType != b.NodeType) return false;
+			if (a.HasLocalTransform != b.HasLocalTransform || a.IsWorldLocked != b.IsWorldLocked) return false;
+			if (a.Transform != b.Transform || a.LocalTransform != b.LocalTransform) return false;
+
+			if (a.LightColor != b.LightColor) return false;
+			if (a.LightIntensity != b.LightIntensity) return false;
+			if (a.LightRange != b.LightRange) return false;
+			if (a.LightAngle != b.LightAngle) return false;
+			if (a.LightSpotSoftness != b.LightSpotSoftness) return false;
+
+			if (a.MeshWidth != b.MeshWidth || a.MeshHeight != b.MeshHeight || a.MeshDepth != b.MeshDepth) return false;
+			if (!ReferenceEquals(a.MeshPoints, b.MeshPoints)) return false;
+			if (!ReferenceEquals(a.MeshIndices, b.MeshIndices)) return false;
+
+			if (a.MatR != b.MatR || a.MatG != b.MatG || a.MatB != b.MatB || a.MatA != b.MatA) return false;
+			if (a.MatMetallic != b.MatMetallic || a.MatRoughness != b.MatRoughness) return false;
+			if (a.MatTexturePath != b.MatTexturePath) return false;
+			if (a.MatUvOffsetX != b.MatUvOffsetX || a.MatUvOffsetY != b.MatUvOffsetY) return false;
+			if (a.MatUvScaleX != b.MatUvScaleX || a.MatUvScaleY != b.MatUvScaleY) return false;
+
+			if (a.TextureSource != b.TextureSource) return false;
+			if (a.SizeX != b.SizeX || a.SizeY != b.SizeY) return false;
+			if (a.Tint != b.Tint) return false;
+
+			if (a.SvgContent != b.SvgContent) return false;
+
+			if (a.TextContent != b.TextContent) return false;
+			if (a.TextColor != b.TextColor || a.FontSize != b.FontSize) return false;
+
+			if (a.Fov != b.Fov || a.NearClip != b.NearClip || a.FarClip != b.FarClip) return false;
+			if (a.IsCurrentCamera != b.IsCurrentCamera) return false;
+
+			return true;
 		}
 
 		private Node3D CreateNode(RenderableSnapshot rs)
@@ -581,10 +649,20 @@ namespace V12TwoDog
 					{
 						if (!string.IsNullOrEmpty(rs.SvgContent))
 						{
-							var svgBytes = System.Text.Encoding.UTF8.GetBytes(rs.SvgContent);
-							var img = new Image();
-							img.LoadSvgFromBuffer(svgBytes, 1.0f);
-							svgSprite.Texture = ImageTexture.CreateFromImage(img);
+							int key = rs.SvgContent.GetHashCode();
+							if (_svgTextureCache.TryGetValue(key, out var cached) && cached.Content == rs.SvgContent)
+							{
+								svgSprite.Texture = cached.Texture;
+							}
+							else
+							{
+								var svgBytes = System.Text.Encoding.UTF8.GetBytes(rs.SvgContent);
+								var img = new Image();
+								img.LoadSvgFromBuffer(svgBytes, 1.0f);
+								var tex = ImageTexture.CreateFromImage(img);
+								svgSprite.Texture = tex;
+								_svgTextureCache[key] = (rs.SvgContent, tex);
+							}
 						}
 						svgSprite.Scale = new Vector3(rs.SizeX, rs.SizeY, 1.0f);
 						var tint = rs.Tint;

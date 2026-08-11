@@ -124,8 +124,11 @@ namespace V12TwoDog
             V12.Core.Networking.BsonConfig.Initialize();
             Console.SetOut(new GodotConsoleWriter());
 
-            // Enable Serilog so GameRoot.Log / GamepackLoader log messages actually appear
-            GameRoot.ConfigureLogging();
+            // Enable Serilog so GameRoot.Log / GamepackLoader log messages actually appear.
+            // Skip when the embedding app already configured sinks (e.g. a file sink in
+            // the game host) — reconfiguring would drop them.
+            if (!V12.Core.GameRoot.LoggingConfigured)
+                GameRoot.ConfigureLogging();
 
             Root = new GameRoot();
             var renderer = new global::V12TwoDog.Renderer(host.GetTree());
@@ -159,7 +162,7 @@ namespace V12TwoDog
                 TryEnableXr(inputService);
             }
 
-            _physics = new GodotPhysicsBackend(host.GetTree().Root.World3D);
+            _physics = new GodotPhysicsBackend(host);
             Root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _physics);
 
             // ── Discover game paks ──
@@ -306,6 +309,12 @@ namespace V12TwoDog
 
             Root.Initialize();
 
+            // Server mode: start listening immediately so clients can join the
+            // headless server. Client mode stays idle until the game UI (or an
+            // embedding host) triggers NetworkClient.ConnectAsync.
+            if (Root.Registry.Get<NetworkHost>("NetworkHost") != null)
+                Root.StartNetworkingAsync();
+
             if (!GamepakMode)
                 AfterGamepakStart();
 
@@ -387,8 +396,17 @@ namespace V12TwoDog
                     NetworkHandler?.ProcessPendingNetworkMessages();
                     Root.Update(dt);
 
-                    var frame = Root.CaptureFrame();
-                    _frameQueue.Enqueue(frame);
+                    // Only capture a fresh frame when something render-affecting
+                    // changed since the last capture (transform, mesh, material,
+                    // element add/remove). Static/idle scenes skip the full world
+                    // walk and snapshot allocation; the main thread keeps
+                    // re-applying the last snapshot (see Renderer.ApplySnapshot,
+                    // which skips nodes whose snapshot is unchanged).
+                    if (Root.ConsumeRenderDirty())
+                    {
+                        var frame = Root.CaptureFrame();
+                        _frameQueue.Enqueue(frame);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -432,6 +450,9 @@ namespace V12TwoDog
 
             // ── Flush deferred Godot API calls from the V12 worker thread ──
             GodotMainThread.FlushPending();
+
+            // ── Advance character controllers (move_and_slide) on the main thread ──
+            _physics?.StepCharacterControllers(delta);
 
             // ── Read physics results back after Godot's physics tick ──
             _physics?.ReadbackAll();

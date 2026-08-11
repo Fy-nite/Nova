@@ -291,17 +291,17 @@ namespace V12TwoDog
             var playerPos = _cachedPlayer.LocalTransform.Position;
             var playerRot = _cachedPlayer.LocalTransform.Rotation;
 
-            float yaw = 0f;
-            var playerComp = _cachedPlayer.GetComponent<V12.Basic.Components.PlayerComponent>();
-            if (playerComp != null)
-            {
-                var field = typeof(V12.Basic.Components.PlayerComponent).GetField("_yaw", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field != null)
-                    yaw = (float)(field.GetValue(playerComp) ?? 0f);
-            }
+            // XR player rotation is identity, so the origin carries no yaw and
+            // the HMD alone is the camera. For a desktop player that later gains
+            // XR, mirroring the element rotation keeps the rig facing the same
+            // way the desktop camera does. (Previously this reflected the private
+            // _yaw field, which in XR mode was driven by the right thumbstick and
+            // rotated the whole world around the player.)
+            if (playerRot.X == 0f && playerRot.Y == 0f && playerRot.Z == 0f && playerRot.W == 0f)
+                playerRot = System.Numerics.Quaternion.Identity;
 
             _origin.Position = new Vector3(playerPos.X, playerPos.Y, playerPos.Z);
-            _origin.Quaternion = new global::Godot.Quaternion(Vector3.Up, yaw);
+            _origin.Quaternion = new global::Godot.Quaternion(playerRot.X, playerRot.Y, playerRot.Z, playerRot.W);
         }
 
         private void UpdateElementLocalPose(Node3D? source, IWorldElement target)
