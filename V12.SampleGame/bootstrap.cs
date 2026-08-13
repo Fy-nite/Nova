@@ -7,6 +7,7 @@ using V12.Components.Renderables;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
+using V12.Core.NetworkCable;
 using V12.WorldML;
 // UI components live in V12.Components.UI but share names with physics/render
 // components (ButtonComponent, ProgressBarComponent), so alias them here.
@@ -211,6 +212,16 @@ namespace V12.SampleGame
                 Label = "Spawn Box",
                 OnPressed = () =>
                 {
+                    // Host-authoritative spawning: the RpcDispatcher broadcast runs this
+                    // handler on EVERY peer, so clients must not spawn locally — the host
+                    // spawns once (with its sequential element id) and the WorldDelta
+                    // replicate carries the same element + id to all clients.
+                    if (_gameroot.Registry.Get<NetworkClient>("NetworkClient") != null)
+                    {
+                        Console.WriteLine("[SampleGamePack] Client: skipping local spawn — waiting for host WorldDelta.");
+                        return;
+                    }
+
                     spawnCount++;
                     Console.WriteLine($"[SampleGamePack] Spawning box #{spawnCount}");
                     var box = new Element

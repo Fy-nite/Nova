@@ -5,6 +5,7 @@ using V12.Components.UI;
 using V12.Core;
 using V12.Core.Core.Interfaces;
 using V12.Core.Input;
+using V12.Core.Networking;
 
 namespace V12TwoDog
 {
@@ -15,19 +16,24 @@ namespace V12TwoDog
     /// <c>CanvasComponent</c>, and creates/updates/destroys Godot scene nodes for
     /// each canvas.
     ///
-    /// World-space canvases (<see cref="CanvasComponent.ScreenSpace"/> == false)
-    /// become 3D nodes — coloured quads + <c>Label3D</c> text — rooted at the
-    /// element's world transform, so UI can be embedded on monitors, holograms,
-    /// etc. Screen-space canvases become Godot <c>Control</c> nodes inside an
-    /// overlay <c>CanvasLayer</c>, exactly like a HUD/menu.
+    /// Every canvas is built from real Godot <c>Control</c> widgets. World-space
+    /// canvases (<see cref="CanvasComponent.ScreenSpace"/> == false) render their
+    /// widget tree into a <c>SubViewport</c> whose texture is applied to the 3D
+    /// quad rooted at the element's world transform, so UI can be embedded on
+    /// monitors, holograms, etc. Screen-space canvases place the same widgets
+    /// inside an overlay <c>CanvasLayer</c>, exactly like a HUD/menu. Godot
+    /// signals (pressed, toggled, value changed, text submitted) drive the V12
+    /// UI components.
     ///
-    /// Interaction: the player's aim ray is cast against world canvases each frame;
-    /// pressing "interact" while pointing at a UI button invokes its click.
+    /// Interaction: the player's aim ray is cast against world canvases each frame
+    /// and the pointer is pushed into the hit canvas's <c>SubViewport</c>, so
+    /// Godot's own Control hit-testing runs hover and press. Screen-space widgets
+    /// take normal mouse/keyboard input directly.
     /// </summary>
     public class WorldCanvasSystem : IInputHandler
     {
-        /// <summary>Label3D pixel-to-world scale (world units per font pixel).</summary>
-        private const float PixelScale = 0.005f;
+        /// <summary>Pixel width of the SubViewport backing each world canvas.</summary>
+        private const int ViewportPxWidth = 1280;
         private const float RayLength = 20f;
 
         private readonly Node3D _host;
@@ -35,13 +41,14 @@ namespace V12TwoDog
         private readonly Dictionary<long, CanvasNode> _canvases = new();
         private GameRoot _gameRoot;
         private bool _inputRegistered;
-        private volatile bool _interactRequested;
 
-        // Continuous hover/drag interaction state for world-space canvases.
-        private WidgetNode? _hoveredWidget;
-        private WidgetNode? _grabbedWidget;   // slider being dragged, if any
-        private CanvasNode? _grabCanvas;
+        // Aim-ray pointer state for world-space viewport canvases. Pointer motion
+        // is pushed into the hit canvas's SubViewport so Godot's own Control
+        // hit-testing drives hover and press (real UI behaviour, no manual picking).
         private bool _interactHeld;
+        private bool _prevInteract;
+        private CanvasNode? _activeCanvas;
+        private Vector2 _pointerViewportPos;
 
         public WorldCanvasSystem(Node3D host)
         {
@@ -54,9 +61,7 @@ namespace V12TwoDog
         /// </summary>
         public void Dispose()
         {
-            SetHover(null);
-            _grabbedWidget = null;
-            _grabCanvas = null;
+            _activeCanvas = null;
             foreach (var cn in _canvases.Values)
                 cn.Free();
             _canvases.Clear();
@@ -117,17 +122,7 @@ namespace V12TwoDog
         public void OnInputEvent(V12.Core.Input.InputEvent evt)
         {
             if (evt.Name != "interact") return;
-            if (evt.Type == InputEventType.ButtonDown)
-            {
-                _interactRequested = true;
-                _interactHeld = true;
-            }
-            else if (evt.Type == InputEventType.ButtonUp)
-            {
-                _interactHeld = false;
-                _grabbedWidget = null;
-                _grabCanvas = null;
-            }
+            _interactHeld = evt.Type == InputEventType.ButtonDown;
         }
 
         private void EnsureInputRegistered()
@@ -141,8 +136,10 @@ namespace V12TwoDog
 
         /// <summary>
         /// Called once per frame. Casts the player's aim ray against every
-        /// world-space canvas, tracks the hovered widget (with visual feedback)
-        /// and handles presses/drags.
+        /// world-space viewport canvas and pushes Godot pointer events into the
+        /// hit canvas's SubViewport, so Godot's own Control hit-testing drives
+        /// hover and press. All SubViewport manipulation happens here on the
+        /// main thread; OnInputEvent only records the button state.
         /// </summary>
         private void UpdateInteraction()
         {
@@ -151,53 +148,114 @@ namespace V12TwoDog
             var playerEl = _gameRoot.FindElementWithComponent<V12.Basic.Components.PlayerComponent>();
             if (playerEl == null)
             {
-                SetHover(null);
+                ReleasePointer();
+                _prevInteract = _interactHeld;
                 return;
             }
             var aim = playerEl.GetComponent<V12.Basic.Components.PlayerComponent>().GetAimRay();
             var origin = new Vector3(aim.origin.X, aim.origin.Y, aim.origin.Z);
             var dir = new Vector3(aim.direction.X, aim.direction.Y, aim.direction.Z);
 
-            // While a slider is grabbed, keep dragging it even if the aim ray
-            // drifts off the widget (same feel as a mouse-held scrollbar).
-            if (_interactHeld && _grabbedWidget != null && _grabCanvas != null)
+            var localPoint = RaycastWorldCanvases(origin, dir, out var canvas);
+            if (canvas == null)
             {
-                if (RaycastCanvas(_grabCanvas, origin, dir, RayLength, out var dragLocal))
-                    SetSliderFromLocal(_grabbedWidget, dragLocal);
-                else if (Mathf.Abs(_grabCanvas.Root3D.GlobalPosition.DistanceTo(origin)) > RayLength)
-                    SetSliderFromLocal(_grabbedWidget, new Vector2(_grabCanvas.Width, 0));
+                ReleasePointer();
+                _prevInteract = _interactHeld;
                 return;
             }
 
-            var hovered = PickWidget(origin, dir, out var localPoint, out var canvas);
-            SetHover(hovered);
+            // Switch active viewport when the aim moves between canvases.
+            if (_activeCanvas != canvas)
+            {
+                if (_activeCanvas != null)
+                {
+                    if (_interactHeld) PushPointerButton(_activeCanvas, false);
+                    PushPointerMotion(_activeCanvas, new Vector2(-1f, -1f));
+                }
+                _activeCanvas = canvas;
+            }
 
-            if (!_interactRequested || hovered == null) return;
-            _interactRequested = false;
-            PressWidget(hovered, canvas, localPoint);
+            bool pressed = _interactHeld && !_prevInteract;
+            bool released = !_interactHeld && _prevInteract;
+            _prevInteract = _interactHeld;
+
+            PushPointerMotion(canvas, localPoint);
+            if (pressed) PushPointerButton(canvas, true);
+            else if (released) PushPointerButton(canvas, false);
         }
 
         /// <summary>
-        /// Raycast the aim ray against all world canvases and return the first
-        /// interactive widget hit (button, toggle, checkbox or slider).
+        /// Ends all pointer activity on the currently active canvas (releases a
+        /// held press and clears hover). Used when the aim leaves every canvas
+        /// or the player disappears.
         /// </summary>
-        private WidgetNode? PickWidget(Vector3 origin, Vector3 dir, out Vector2 localPoint, out CanvasNode? canvas)
+        private void ReleasePointer()
         {
-            localPoint = default;
+            if (_activeCanvas == null) return;
+            if (_interactHeld) PushPointerButton(_activeCanvas, false);
+            PushPointerMotion(_activeCanvas, new Vector2(-9999f, -9999f));
+            _activeCanvas = null;
+        }
+
+        private void PushPointerMotion(CanvasNode canvas, Vector2 localPoint)
+        {
+            var viewport = canvas.Viewport;
+            if (viewport == null) return;
+            _pointerViewportPos = LocalToViewport(canvas, localPoint);
+            viewport.PushInput(new InputEventMouseMotion
+            {
+                Position = _pointerViewportPos,
+                GlobalPosition = _pointerViewportPos,
+                ButtonMask = _interactHeld ? MouseButtonMask.Left : 0,
+            });
+        }
+
+        private void PushPointerButton(CanvasNode canvas, bool pressed)
+        {
+            var viewport = canvas.Viewport;
+            if (viewport == null) return;
+            viewport.PushInput(new InputEventMouseButton
+            {
+                Position = _pointerViewportPos,
+                GlobalPosition = _pointerViewportPos,
+                ButtonIndex = MouseButton.Left,
+                Pressed = pressed,
+                ButtonMask = pressed ? MouseButtonMask.Left : 0,
+            });
+        }
+
+        /// <summary>
+        /// Converts a canvas-local point (local +Y up, origin at the canvas
+        /// centre) into SubViewport pixel coordinates (origin top-left, +Y
+        /// down) so a pushed mouse event lands on the same pixel the aim ray
+        /// hit on the quad.
+        /// </summary>
+        private static Vector2 LocalToViewport(CanvasNode canvas, Vector2 localPoint)
+        {
+            var viewport = canvas.Viewport;
+            if (viewport == null) return default;
+            return new Vector2(
+                (localPoint.X + canvas.Width / 2f) / canvas.Width * viewport.Size.X,
+                (canvas.Height / 2f - localPoint.Y) / canvas.Height * viewport.Size.Y);
+        }
+
+        /// <summary>
+        /// Raycast the aim ray against all world viewport canvases and return
+        /// the first one hit, with the hit point in canvas-local units.
+        /// </summary>
+        private Vector2 RaycastWorldCanvases(Vector3 origin, Vector3 dir, out CanvasNode? canvas)
+        {
             canvas = null;
             foreach (var cn in _canvases.Values)
             {
-                if (cn.ScreenSpace || cn.Root3D == null) continue;
-                if (!RaycastCanvas(cn, origin, dir, RayLength, out var local)) continue;
-                var wn = HitTestWidget(cn, local);
-                if (wn != null)
+                if (cn.ScreenSpace || cn.Root3D == null || cn.Viewport == null) continue;
+                if (RaycastCanvas(cn, origin, dir, RayLength, out var local))
                 {
                     canvas = cn;
-                    localPoint = local;
-                    return wn;
+                    return local;
                 }
             }
-            return null;
+            return default;
         }
 
         private static bool RaycastCanvas(CanvasNode cn, Vector3 origin, Vector3 dir, float maxDist, out Vector2 localPoint)
@@ -216,118 +274,13 @@ namespace V12TwoDog
             return true;
         }
 
-        private static bool IsInteractive(string kind) =>
-            kind is "button" or "toggle" or "checkbox" or "slider";
-
-        private static WidgetNode? HitTestWidget(CanvasNode cn, Vector2 localPoint)
-        {
-            foreach (var wn in cn.Widgets.Values)
-            {
-                if (!IsInteractive(wn.Kind) || wn.Root3D == null || wn.Element == null) continue;
-                var pos = wn.Root3D.Position;
-                var size = Measure(wn.Element);
-                if (Mathf.Abs(localPoint.X - pos.X) <= size.X / 2f && Mathf.Abs(localPoint.Y - pos.Y) <= size.Y / 2f)
-                    return wn;
-            }
-            return null;
-        }
-
-        private void SetHover(WidgetNode? wn)
-        {
-            if (_hoveredWidget == wn) return;
-            if (_hoveredWidget != null)
-                ApplyHoverVisual(_hoveredWidget, false);
-            _hoveredWidget = wn;
-            if (_hoveredWidget != null)
-                ApplyHoverVisual(_hoveredWidget, true);
-        }
-
-        private static void ApplyHoverVisual(WidgetNode wn, bool hovered)
-        {
-            switch (wn.Kind)
-            {
-                case "button":
-                    if (wn.RectMat != null)
-                        wn.RectMat.AlbedoColor = hovered
-                            ? new Color(0.35f, 0.58f, 0.98f)
-                            : new Color(0.22f, 0.45f, 0.85f);
-                    break;
-                case "toggle":
-                case "checkbox":
-                    if (wn.TrackMat != null)
-                        wn.TrackMat.AlbedoColor = hovered
-                            ? new Color(0.38f, 0.38f, 0.46f)
-                            : new Color(0.25f, 0.25f, 0.3f);
-                    break;
-                case "slider":
-                    if (wn.HandleMat != null)
-                        wn.HandleMat.AlbedoColor = hovered
-                            ? new Color(1f, 1f, 1f)
-                            : new Color(0.85f, 0.85f, 0.9f);
-                    break;
-            }
-        }
-
-        private void PressWidget(WidgetNode wn, CanvasNode? cn, Vector2 localPoint)
-        {
-            switch (wn.Kind)
-            {
-                case "button":
-                    InvokeClick(wn);
-                    break;
-                case "toggle":
-                {
-                    var t = wn.Element?.GetComponent<ToggleComponent>();
-                    if (t != null)
-                    {
-                        t.IsOn = !t.IsOn;
-                        try { t.OnToggled?.Invoke(t.IsOn); } catch { }
-                        if (cn != null) ApplyVisualState(cn, wn, wn.Element);
-                    }
-                    break;
-                }
-                case "checkbox":
-                {
-                    var c = wn.Element?.GetComponent<CheckboxComponent>();
-                    if (c != null)
-                    {
-                        c.Checked = !c.Checked;
-                        try { c.OnChanged?.Invoke(c.Checked); } catch { }
-                        if (cn != null) ApplyVisualState(cn, wn, wn.Element);
-                    }
-                    break;
-                }
-                case "slider":
-                    _grabbedWidget = wn;
-                    _grabCanvas = cn;
-                    SetSliderFromLocal(wn, localPoint);
-                    break;
-            }
-        }
-
-        private void SetSliderFromLocal(WidgetNode wn, Vector2 localPoint)
-        {
-            var s = wn.Element?.GetComponent<SliderComponent>();
-            if (s == null) return;
-            var size = Measure(wn.Element);
-            float t = Mathf.Clamp((localPoint.X + size.X / 2f) / Mathf.Max(size.X, 0.0001f), 0f, 1f);
-            float value = s.Min + t * (s.Max - s.Min);
-            if (s.Step > 0f)
-                value = Mathf.Round(value / s.Step) * s.Step;
-            value = Mathf.Clamp(value, s.Min, s.Max);
-            if (Mathf.Abs(value - s.Value) > 0.0001f)
-            {
-                s.Value = value;
-                try { s.OnChanged?.Invoke(value); } catch { }
-            }
-        }
-
-        private static void InvokeClick(WidgetNode wn)
+        private void InvokeClick(WidgetNode wn)
         {
             var uiBtn = wn.Element.GetComponent<ButtonComponent>();
             if (uiBtn != null)
             {
                 uiBtn.InvokeClick();
+                RpcDispatcher.CallButtonPressed(_gameRoot, wn.Element);
                 return;
             }
             var legacy = wn.Element.GetComponent<V12.Components.ButtonComponent>();
@@ -335,6 +288,7 @@ namespace V12TwoDog
             {
                 legacy.Pressed = true;
                 legacy.OnPressed?.Invoke();
+                RpcDispatcher.CallButtonPressed(_gameRoot, wn.Element);
             }
         }
 
@@ -376,10 +330,37 @@ namespace V12TwoDog
                 cn.Root3D = new Node3D { Name = "UICanvas_" + el.Id };
                 _host.AddChild(cn.Root3D);
 
+                // The canvas is a real Godot Control tree rendered into a
+                // SubViewport and textured onto the panel quad. Godot's own
+                // hit-testing (driven by pushed pointer events) runs the UI.
+                cn.Viewport = new SubViewport
+                {
+                    Name = "Viewport_" + el.Id,
+                    Size = new Vector2I(ViewportPxWidth, ViewportPxWidth / 2),
+                    TransparentBg = true,
+                    HandleInputLocally = false,
+                    RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                };
+                _host.AddChild(cn.Viewport);
+
+                cn.ViewportRoot = new Control { Name = "Root" };
+                cn.ViewportRoot.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                cn.Viewport.AddChild(cn.ViewportRoot);
+
+                cn.WorldLayout = el.GetComponent<HLayoutComponent>() != null && el.GetComponent<VLayoutComponent>() == null
+                    ? new HBoxContainer { Name = "Layout" }
+                    : new VBoxContainer { Name = "Layout" };
+                cn.ViewportRoot.AddChild(cn.WorldLayout);
+                cn.WorldLayout.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+                cn.WorldLayout.Alignment = BoxContainer.AlignmentMode.Center;
+
                 // Subtle backing panel so an otherwise-floating canvas reads as a "screen".
                 cn.Panel = MakeQuad(new Vector2(cn.Width, cn.Height), new Color(0.1f, 0.1f, 0.12f, 0.55f));
                 cn.Panel.Position = new Vector3(0, 0, -0.01f);
                 cn.Root3D.AddChild(cn.Panel);
+
+                if (cn.Panel.MaterialOverride is StandardMaterial3D panelMat)
+                    panelMat.AlbedoTexture = cn.Viewport.GetTexture();
             }
 
             GD.Print($"[WorldCanvas] {(cn.ScreenSpace ? "screen-space" : "world-space")} canvas '{el.Name}' (id={el.Id}) attached.");
@@ -406,13 +387,23 @@ namespace V12TwoDog
                 }
                 cn.Root3D.Transform = WorldTransformNoScale(el);
 
+                // Keep the SubViewport resolution proportional to the canvas aspect.
+                if (cn.Viewport != null && cn.Width > 0.001f)
+                {
+                    var target = new Vector2I(
+                        ViewportPxWidth,
+                        Math.Max(1, (int)Math.Round(ViewportPxWidth * cn.Height / cn.Width)));
+                    if (cn.Viewport.Size != target)
+                        cn.Viewport.Size = target;
+                }
+
                 if (cn.Panel != null)
                 {
                     cn.Panel.Scale = new Vector3(cn.Width, cn.Height, 1);
                     if (cn.Panel.MaterialOverride is StandardMaterial3D mat)
                     {
                         mat.AlbedoColor = new Color(0.1f, 0.1f, 0.12f, 0.55f);
-                        mat.AlbedoTexture = null;
+                        mat.AlbedoTexture ??= cn.Viewport?.GetTexture();
                     }
                 }
             }
@@ -441,16 +432,6 @@ namespace V12TwoDog
                 if (!cn.Widgets.TryGetValue(w.Id, out var wn))
                 {
                     wn = new WidgetNode { ElementId = w.Id, Element = w };
-                    if (cn.ScreenSpace)
-                    {
-                        wn.RootControl = new Control { Name = "UI_" + w.Id };
-                        cn.LayoutBox.AddChild(wn.RootControl);
-                    }
-                    else
-                    {
-                        wn.Root3D = new Node3D { Name = "UI_" + w.Id };
-                        cn.Root3D.AddChild(wn.Root3D);
-                    }
                     cn.Widgets[w.Id] = wn;
                 }
                 UpdateWidget(cn, wn, w);
@@ -464,22 +445,17 @@ namespace V12TwoDog
             }
             foreach (var id in toRemove)
             {
-                if (_hoveredWidget?.ElementId == id)
-                    SetHover(null);
-                if (_grabbedWidget?.ElementId == id)
-                {
-                    _grabbedWidget = null;
-                    _grabCanvas = null;
-                }
-                cn.Widgets[id].Free(cn.ScreenSpace);
+                if (_activeCanvas?.ElementId == id)
+                    _activeCanvas = null;
+                cn.Widgets[id].Free();
                 cn.Widgets.Remove(id);
             }
 
             // Lay out widgets once their sizes are known.
-            if (!cn.ScreenSpace)
-                LayoutElement(cn, el, Vector2.Zero);
-            else
+            if (cn.ScreenSpace)
                 cn.LayoutBox.QueueSort();
+            else if (cn.WorldLayout != null)
+                cn.WorldLayout.QueueSort();
         }
 
         private void CollectWidgets(IWorldElement el, List<IWorldElement> outWidgets)
@@ -519,7 +495,7 @@ namespace V12TwoDog
             string kind = KindOf(el);
             if (wn.Kind != kind)
             {
-                wn.FreeVisuals(cn.ScreenSpace);
+                wn.FreeVisuals();
                 wn.Kind = kind;
                 BuildVisuals(cn, wn, el);
             }
@@ -546,267 +522,7 @@ namespace V12TwoDog
 
         private void BuildVisuals(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
-            if (cn.ScreenSpace)
-                BuildScreenVisuals(cn, wn, el);
-            else
-                BuildWorldVisuals(cn, wn, el);
-        }
-
-        // ── World-space visuals ───────────────────────────────────────────
-
-        private void BuildWorldVisuals(CanvasNode cn, WidgetNode wn, IWorldElement el)
-        {
-            string kind = wn.Kind;
-            var size = Measure(el);
-
-            switch (kind)
-            {
-                case "label":
-                {
-                    var label = new Label3D { PixelSize = PixelScale, Position = new Vector3(0, 0, 0.005f) };
-                    wn.Label3D = label;
-                    wn.Root3D.AddChild(label);
-                    break;
-                }
-                case "rect":
-                {
-                    var mat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.2f, 0.2f, 0.25f)
-                    };
-                    wn.Rect = MakeQuad(size, Colors.White);
-                    wn.Rect.MaterialOverride = mat;
-                    wn.RectMat = mat;
-                    wn.Root3D.AddChild(wn.Rect);
-                    break;
-                }
-                case "button":
-                {
-                    wn.RectMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.22f, 0.45f, 0.85f)
-                    };
-                    wn.Rect = MakeQuad(size, Colors.White);
-                    wn.Rect.MaterialOverride = wn.RectMat;
-                    wn.Root3D.AddChild(wn.Rect);
-
-                    wn.Label3D = new Label3D { PixelSize = PixelScale, Position = new Vector3(0, 0, 0.005f) };
-                    wn.Root3D.AddChild(wn.Label3D);
-                    break;
-                }
-                case "progress":
-                {
-                    wn.TrackMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.18f, 0.18f, 0.2f)
-                    };
-                    wn.Track = MakeQuad(size, Colors.White);
-                    wn.Track.MaterialOverride = wn.TrackMat;
-                    wn.Root3D.AddChild(wn.Track);
-
-                    wn.FillMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.25f, 0.8f, 0.35f)
-                    };
-                    wn.Fill = MakeQuad(size, Colors.White);
-                    wn.Fill.MaterialOverride = wn.FillMat;
-                    wn.Root3D.AddChild(wn.Fill);
-                    break;
-                }
-                case "toggle":
-                case "checkbox":
-                {
-                    var boxSize = new Vector2(0.05f, 0.05f);
-                    wn.TrackMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.25f, 0.25f, 0.3f)
-                    };
-                    wn.Track = MakeQuad(boxSize, Colors.White);
-                    wn.Track.MaterialOverride = wn.TrackMat;
-                    wn.Track.Position = new Vector3(-size.X / 2 + 0.05f, 0, 0);
-                    wn.Root3D.AddChild(wn.Track);
-
-                    wn.FillMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.25f, 0.8f, 0.35f)
-                    };
-                    wn.Fill = MakeQuad(boxSize, Colors.White);
-                    wn.Fill.MaterialOverride = wn.FillMat;
-                    wn.Fill.Position = new Vector3(-size.X / 2 + 0.05f, 0, 0.001f);
-                    wn.Root3D.AddChild(wn.Fill);
-
-                    wn.Label3D = new Label3D { PixelSize = PixelScale };
-                    wn.Label3D.Position = new Vector3(0.09f, 0, 0.005f);
-                    wn.Root3D.AddChild(wn.Label3D);
-                    break;
-                }
-                case "slider":
-                {
-                    wn.TrackMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.2f, 0.2f, 0.25f)
-                    };
-                    wn.Track = MakeQuad(size, Colors.White);
-                    wn.Track.MaterialOverride = wn.TrackMat;
-                    wn.Root3D.AddChild(wn.Track);
-
-                    wn.HandleMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        AlbedoColor = new Color(0.85f, 0.85f, 0.9f)
-                    };
-                    wn.Handle = MakeQuad(new Vector2(0.05f, size.Y + 0.02f), Colors.White);
-                    wn.Handle.MaterialOverride = wn.HandleMat;
-                    wn.Root3D.AddChild(wn.Handle);
-                    break;
-                }
-                case "textinput":
-                {
-                    wn.RectMat = new StandardMaterial3D
-                    {
-                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                        AlbedoColor = new Color(0.15f, 0.15f, 0.2f)
-                    };
-                    wn.Rect = MakeQuad(size, Colors.White);
-                    wn.Rect.MaterialOverride = wn.RectMat;
-                    wn.Root3D.AddChild(wn.Rect);
-
-                    wn.Label3D = new Label3D { PixelSize = PixelScale, Position = new Vector3(0, 0, 0.005f) };
-                    wn.Root3D.AddChild(wn.Label3D);
-                    break;
-                }
-                case "image":
-                case "icon":
-                {
-                    wn.Rect = MakeQuad(size, Colors.White);
-                    wn.Root3D.AddChild(wn.Rect);
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-
-        private void ApplyWorldVisualState(WidgetNode wn, IWorldElement el, string kind)
-        {
-            switch (kind)
-            {
-                case "label":
-                {
-                    var l = el.GetComponent<LabelComponent>();
-                    if (wn.Label3D != null)
-                    {
-                        wn.Label3D.Text = l?.Text ?? "";
-                        ApplyStyle(el, wn.Label3D, l?.FontSize ?? 16f);
-                    }
-                    break;
-                }
-                case "rect":
-                {
-                    var r = el.GetComponent<RectComponent>();
-                    if (wn.RectMat != null)
-                        wn.RectMat.AlbedoColor = ParseColor(r?.BackgroundColor, new Color(0.25f, 0.25f, 0.3f));
-                    break;
-                }
-                case "button":
-                {
-                    var b = el.GetComponent<ButtonComponent>();
-                    var legacy = el.GetComponent<V12.Components.ButtonComponent>();
-                    string label = b?.Label ?? legacy?.Label ?? "Button";
-                    if (wn.Label3D != null) wn.Label3D.Text = label;
-                    if (wn.RectMat != null)
-                    {
-                        bool pressed = legacy?.Pressed ?? false;
-                        if (wn.Hovered)
-                            wn.RectMat.AlbedoColor = new Color(0.35f, 0.58f, 0.98f);
-                        else if (pressed)
-                            wn.RectMat.AlbedoColor = new Color(0.1f, 0.3f, 0.6f);
-                        else
-                            wn.RectMat.AlbedoColor = new Color(0.22f, 0.45f, 0.85f);
-                    }
-                    break;
-                }
-                case "progress":
-                {
-                    var p = el.GetComponent<ProgressBarComponent>();
-                    float v = Mathf.Clamp(p?.Value ?? 0f, 0f, 1f);
-                    var size = Measure(el);
-                    if (wn.Fill != null)
-                        wn.Fill.Scale = new Vector3(size.X * v, size.Y, 1);
-                    if (wn.Fill != null)
-                        wn.Fill.Position = new Vector3(-size.X / 2 + size.X * v / 2, 0, 0.001f);
-                    break;
-                }
-                case "toggle":
-                case "checkbox":
-                {
-                    bool on = kind == "toggle"
-                        ? (el.GetComponent<ToggleComponent>()?.IsOn ?? false)
-                        : (el.GetComponent<CheckboxComponent>()?.Checked ?? false);
-                    if (wn.Fill != null)
-                        wn.Fill.Visible = on;
-                    var text = kind == "toggle"
-                        ? (el.GetComponent<ToggleComponent>()?.Label ?? "")
-                        : (el.GetComponent<CheckboxComponent>()?.Label ?? "");
-                    if (wn.Label3D != null) wn.Label3D.Text = text;
-                    break;
-                }
-                case "slider":
-                {
-                    var s = el.GetComponent<SliderComponent>();
-                    var size = Measure(el);
-                    float t = s != null && s.Max > s.Min ? (s.Value - s.Min) / (s.Max - s.Min) : 0f;
-                    t = Mathf.Clamp(t, 0f, 1f);
-                    if (wn.Handle != null)
-                        wn.Handle.Position = new Vector3(-size.X / 2 + size.X * t, 0, 0.001f);
-                    if (wn.HandleMat != null)
-                        wn.HandleMat.AlbedoColor = wn.Hovered
-                            ? new Color(1f, 1f, 1f)
-                            : new Color(0.85f, 0.85f, 0.9f);
-                    break;
-                }
-                case "textinput":
-                {
-                    var ti = el.GetComponent<TextInputComponent>();
-                    string shown = string.IsNullOrEmpty(ti?.Value) ? (ti?.Placeholder ?? "") : ti.Value;
-                    if (wn.Label3D != null) wn.Label3D.Text = shown;
-                    if (wn.Label3D != null)
-                        wn.Label3D.Modulate = string.IsNullOrEmpty(ti?.Value)
-                            ? new Color(0.6f, 0.6f, 0.6f)
-                            : Colors.White;
-                    break;
-                }
-                case "image":
-                case "icon":
-                {
-                    string src = kind == "image"
-                        ? (el.GetComponent<ImageComponent>()?.Source ?? "")
-                        : "";
-                    if (!string.IsNullOrEmpty(src) && wn.Rect != null
-                        && wn.Rect.MaterialOverride is StandardMaterial3D imgMat && imgMat.AlbedoTexture == null)
-                    {
-                        var tex = LoadTexture(src);
-                        if (tex != null)
-                            imgMat.AlbedoTexture = tex;
-                    }
-                    break;
-                }
-            }
+            BuildScreenVisuals(cn, wn, el);
         }
 
         // ── Screen-space visuals (Godot Control overlay) ──────────────────
@@ -814,49 +530,125 @@ namespace V12TwoDog
         private void BuildScreenVisuals(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
             string kind = wn.Kind;
+            var parent = WidgetParent(cn, el);
+
             switch (kind)
             {
                 case "label":
                     wn.ScreenLabel = new Label();
+                    parent?.AddChild(wn.ScreenLabel);
                     break;
                 case "button":
                     wn.ScreenButton = new Button();
+                    parent?.AddChild(wn.ScreenButton);
+                    wn.ScreenButton.Pressed += () =>
+                    {
+                        try { InvokeClick(wn); }
+                        catch (Exception e) { GD.PrintErr($"[WorldCanvas] button handler: {e}"); }
+                    };
                     break;
                 case "rect":
-                    wn.ScreenRect = new ColorRect();
+                    wn.ScreenRect = new ColorRect
+                    {
+                        Color = new Color(0.25f, 0.25f, 0.3f),
+                        CustomMinimumSize = new Vector2(16, 8),
+                        SizeFlagsHorizontal = Control.SizeFlags.Expand | Control.SizeFlags.Fill,
+                        SizeFlagsVertical = Control.SizeFlags.Expand | Control.SizeFlags.Fill,
+                    };
+                    parent?.AddChild(wn.ScreenRect);
                     break;
                 case "progress":
-                    wn.ScreenProgress = new ProgressBar();
+                    wn.ScreenProgress = new ProgressBar
+                    {
+                        CustomMinimumSize = new Vector2(160, 20),
+                        ShowPercentage = false,
+                    };
+                    parent?.AddChild(wn.ScreenProgress);
                     break;
                 case "toggle":
                     wn.ScreenCheck = new CheckButton();
+                    parent?.AddChild(wn.ScreenCheck);
+                    wn.ScreenCheck.Toggled += on =>
+                    {
+                        var t = wn.Element?.GetComponent<ToggleComponent>();
+                        if (t == null || t.IsOn == on) return;
+                        t.IsOn = on;
+                        try { t.OnToggled?.Invoke(on); } catch { }
+                    };
                     break;
                 case "checkbox":
                     wn.ScreenCheck = new CheckBox();
+                    parent?.AddChild(wn.ScreenCheck);
+                    wn.ScreenCheck.Toggled += on =>
+                    {
+                        var c = wn.Element?.GetComponent<CheckboxComponent>();
+                        if (c == null || c.Checked == on) return;
+                        c.Checked = on;
+                        try { c.OnChanged?.Invoke(on); } catch { }
+                    };
                     break;
                 case "slider":
-                    wn.ScreenSlider = new HSlider();
+                    wn.ScreenSlider = new HSlider { CustomMinimumSize = new Vector2(160, 20) };
+                    parent?.AddChild(wn.ScreenSlider);
+                    wn.ScreenSlider.ValueChanged += v =>
+                    {
+                        var s = wn.Element?.GetComponent<SliderComponent>();
+                        if (s == null) return;
+                        float value = (float)v;
+                        if (Mathf.Abs(value - s.Value) < 0.0001f) return;
+                        s.Value = value;
+                        try { s.OnChanged?.Invoke(value); } catch { }
+                    };
                     break;
                 case "textinput":
                     wn.ScreenEdit = new LineEdit();
+                    parent?.AddChild(wn.ScreenEdit);
+                    wn.ScreenEdit.TextSubmitted += text =>
+                    {
+                        var ti = wn.Element?.GetComponent<TextInputComponent>();
+                        if (ti == null || ti.Value == text) return;
+                        ti.Value = text; // the setter raises OnChanged
+                    };
                     break;
                 case "image":
-                    wn.ScreenRect = new ColorRect { Color = new Color(0.25f, 0.25f, 0.3f) };
+                    wn.ScreenRect = new ColorRect
+                    {
+                        Color = new Color(0.25f, 0.25f, 0.3f),
+                        CustomMinimumSize = new Vector2(16, 16),
+                        SizeFlagsHorizontal = Control.SizeFlags.Expand | Control.SizeFlags.Fill,
+                        SizeFlagsVertical = Control.SizeFlags.Expand | Control.SizeFlags.Fill,
+                    };
+                    parent?.AddChild(wn.ScreenRect);
                     break;
+                case "hlayout":
+                case "vlayout":
+                {
+                    var box = kind == "hlayout"
+                        ? (Container)new HBoxContainer()
+                        : new VBoxContainer();
+                    wn.Container = box;
+                    box.SizeFlagsHorizontal = Control.SizeFlags.Expand | Control.SizeFlags.Fill;
+                    box.SizeFlagsVertical = Control.SizeFlags.Expand | Control.SizeFlags.Fill;
+                    parent?.AddChild(box);
+                    break;
+                }
                 default:
                     break;
             }
+        }
 
-            if (wn.RootControl != null)
-            {
-                if (wn.ScreenLabel != null) wn.RootControl.AddChild(wn.ScreenLabel);
-                if (wn.ScreenButton != null) wn.RootControl.AddChild(wn.ScreenButton);
-                if (wn.ScreenRect != null) wn.RootControl.AddChild(wn.ScreenRect);
-                if (wn.ScreenProgress != null) wn.RootControl.AddChild(wn.ScreenProgress);
-                if (wn.ScreenCheck != null) wn.RootControl.AddChild(wn.ScreenCheck);
-                if (wn.ScreenSlider != null) wn.RootControl.AddChild(wn.ScreenSlider);
-                if (wn.ScreenEdit != null) wn.RootControl.AddChild(wn.ScreenEdit);
-            }
+        /// <summary>
+        /// The Control a widget's visuals are added to: the container of a
+        /// parent widget when this element nests inside one, otherwise the
+        /// canvas layout itself (screen overlay or world viewport).
+        /// </summary>
+        private Control? WidgetParent(CanvasNode cn, IWorldElement el)
+        {
+            var p = el.Parent;
+            if (p != null && p.GetComponent<CanvasComponent>() == null
+                && cn.Widgets.TryGetValue(p.Id, out var pwn) && pwn.Container != null)
+                return pwn.Container;
+            return cn.ScreenSpace ? (Control?)cn.LayoutBox : (Control?)cn.WorldLayout;
         }
 
         private void ApplyScreenVisualState(WidgetNode wn, IWorldElement el, string kind)
@@ -925,123 +717,10 @@ namespace V12TwoDog
 
         private void ApplyVisualState(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
-            if (cn.ScreenSpace)
-                ApplyScreenVisualState(wn, el, wn.Kind);
-            else
-                ApplyWorldVisualState(wn, el, wn.Kind);
-        }
-
-        // ── Layout (world-space) ──────────────────────────────────────────
-
-        private static Vector2 Measure(IWorldElement el)
-        {
-            switch (KindOf(el))
-            {
-                case "label":
-                {
-                    var l = el.GetComponent<LabelComponent>();
-                    float px = l?.FontSize > 0 ? l.FontSize : 16f;
-                    float h = px * PixelScale;
-                    float w = (l?.Text.Length ?? 0) * px * PixelScale * 0.6f;
-                    return new Vector2(Mathf.Max(w, 0.1f), h);
-                }
-                case "rect":
-                {
-                    var r = el.GetComponent<RectComponent>();
-                    return new Vector2(r?.Width > 0 ? r.Width : 1f, r?.Height > 0 ? r.Height : 0.3f);
-                }
-                case "button":
-                {
-                    var b = el.GetComponent<ButtonComponent>();
-                    var legacy = el.GetComponent<V12.Components.ButtonComponent>();
-                    string label = b?.Label ?? legacy?.Label ?? "Button";
-                    float w = Mathf.Max(0.6f, label.Length * 18f * PixelScale * 0.6f + 0.12f);
-                    return new Vector2(w, 0.12f);
-                }
-                case "progress": return new Vector2(1.5f, 0.1f);
-                case "toggle":
-                case "checkbox": return new Vector2(0.9f, 0.12f);
-                case "slider": return new Vector2(1.2f, 0.08f);
-                case "textinput": return new Vector2(1.2f, 0.12f);
-                case "image": return new Vector2(0.5f, 0.5f);
-                case "icon": return new Vector2(0.1f, 0.1f);
-                default: return new Vector2(0.5f, 0.25f);
-            }
-        }
-
-        /// <summary>
-        /// Position the direct UI children of <paramref name="el"/> inside the
-        /// canvas, honouring H/V layout components. Returns the subtree size so
-        /// nested containers lay out correctly. <paramref name="origin"/> is the
-        /// centre of <paramref name="el"/> in canvas-local coordinates.
-        /// </summary>
-        private Vector2 LayoutElement(CanvasNode cn, IWorldElement el, Vector2 origin)
-        {
-            var children = new List<IWorldElement>();
-            foreach (var c in el.Children)
-            {
-                if (c.GetComponent<CanvasComponent>() != null) continue;
-                if (HasAnyUiComponent(c)) children.Add(c);
-            }
-            if (children.Count == 0)
-                return Measure(el);
-
-            var vcomp = el.GetComponent<VLayoutComponent>();
-            var hcomp = el.GetComponent<HLayoutComponent>();
-            float spacing = (vcomp?.Spacing ?? hcomp?.Spacing ?? 3f) * 0.01f;
-            bool horizontal = hcomp != null && vcomp == null;
-
-            float contentW = 0, contentH = 0;
-            var sizes = new List<Vector2>();
-            foreach (var c in children)
-            {
-                var s = Measure(c);
-                sizes.Add(s);
-                if (horizontal) contentW += s.X;
-                else contentH += s.Y;
-            }
-            if (horizontal) contentW += spacing * (children.Count - 1);
-            else contentH += spacing * (children.Count - 1);
-
-            float tx = origin.X - (horizontal ? contentW / 2 : 0);
-            float ty = origin.Y + (horizontal ? 0 : contentH / 2);
-
-            for (int i = 0; i < children.Count; i++)
-            {
-                var c = children[i];
-                var s = sizes[i];
-                var center = new Vector2(tx + (horizontal ? s.X / 2 : 0), ty - (horizontal ? 0 : s.Y / 2));
-                if (cn.Widgets.TryGetValue(c.Id, out var wn))
-                    wn.Root3D.Position = new Vector3(center.X, center.Y, 0);
-
-                LayoutElement(cn, c, center);
-
-                if (horizontal) tx += s.X + spacing;
-                else ty -= s.Y + spacing;
-            }
-
-            return horizontal
-                ? new Vector2(contentW, Measure(el).Y)
-                : new Vector2(Measure(el).X, contentH);
+            ApplyScreenVisualState(wn, el, wn.Kind);
         }
 
         // ── Helpers ───────────────────────────────────────────────────────
-
-        private static void ApplyStyle(IWorldElement el, Label3D label, float baseFontSize)
-        {
-            label.FontSize = (int)(baseFontSize > 0 ? baseFontSize : 16f);
-            label.Modulate = Colors.White;
-            var style = el.GetComponent<UIStyleComponent>();
-            if (style?.StyleHint == null) return;
-            switch (style.StyleHint)
-            {
-                case "title": label.FontSize = 24; break;
-                case "muted": label.Modulate = new Color(0.7f, 0.7f, 0.72f); break;
-                case "danger": label.Modulate = new Color(0.95f, 0.35f, 0.35f); break;
-                case "accent": label.Modulate = new Color(0.4f, 0.7f, 1f); break;
-                default: break;
-            }
-        }
 
         private static MeshInstance3D MakeQuad(Vector2 size, Color color)
         {
@@ -1071,23 +750,6 @@ namespace V12TwoDog
             return fallback;
         }
 
-        private static Texture2D? LoadTexture(string source)
-        {
-            if (string.IsNullOrEmpty(source)) return null;
-            try
-            {
-                if (source.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
-                    return GD.Load<Texture2D>(source);
-                if (System.IO.File.Exists(source))
-                {
-                    var img = new Image();
-                    if (img.Load(source) == Error.Ok)
-                        return ImageTexture.CreateFromImage(img);
-                }
-            }
-            catch { }
-            return null;
-        }
 
         /// <summary>
         /// World transform (position + rotation, ignoring scale — scale is used
@@ -1125,6 +787,9 @@ namespace V12TwoDog
 
             public Node3D Root3D;
             public MeshInstance3D Panel;
+            public SubViewport Viewport;
+            public Control ViewportRoot;
+            public BoxContainer WorldLayout;
             public Control RootControl;
             public VBoxContainer LayoutBox;
 
@@ -1133,10 +798,11 @@ namespace V12TwoDog
             public void Free()
             {
                 foreach (var w in Widgets.Values)
-                    w.Free(ScreenSpace);
+                    w.Free();
                 Widgets.Clear();
                 if (Root3D != null && GodotObject.IsInstanceValid(Root3D)) Root3D.QueueFree();
                 if (RootControl != null && GodotObject.IsInstanceValid(RootControl)) RootControl.QueueFree();
+                if (Viewport != null && GodotObject.IsInstanceValid(Viewport)) Viewport.QueueFree();
             }
         }
 
@@ -1145,20 +811,6 @@ namespace V12TwoDog
             public long ElementId;
             public string Kind = "";
             public IWorldElement Element;
-            public bool Hovered;
-
-            public Node3D Root3D;
-            public Control RootControl;
-
-            public Label3D Label3D;
-            public MeshInstance3D Rect;
-            public MeshInstance3D Fill;
-            public MeshInstance3D Track;
-            public MeshInstance3D Handle;
-            public StandardMaterial3D RectMat;
-            public StandardMaterial3D FillMat;
-            public StandardMaterial3D TrackMat;
-            public StandardMaterial3D HandleMat;
 
             public Label ScreenLabel;
             public Button ScreenButton;
@@ -1167,29 +819,20 @@ namespace V12TwoDog
             public BaseButton ScreenCheck;
             public HSlider ScreenSlider;
             public LineEdit ScreenEdit;
+            public Container Container;
 
-            public void FreeVisuals(bool screenSpace)
+            public void FreeVisuals()
             {
-                if (screenSpace)
-                {
-                    foreach (var c in new[] { ScreenLabel as Node, ScreenButton, ScreenRect, ScreenProgress, ScreenCheck, ScreenSlider, ScreenEdit })
-                        if (c != null && GodotObject.IsInstanceValid(c)) c.QueueFree();
-                    ScreenLabel = null; ScreenButton = null; ScreenRect = null;
-                    ScreenProgress = null; ScreenCheck = null; ScreenSlider = null; ScreenEdit = null;
-                    return;
-                }
-
-                foreach (var c in new[] { Label3D as Node, Rect, Fill, Track, Handle })
+                foreach (var c in new Node?[] { ScreenLabel, ScreenButton, ScreenRect, ScreenProgress, ScreenCheck, ScreenSlider, ScreenEdit, Container })
                     if (c != null && GodotObject.IsInstanceValid(c)) c.QueueFree();
-                Label3D = null; Rect = null; Fill = null; Track = null; Handle = null;
-                RectMat = null; FillMat = null; TrackMat = null; HandleMat = null;
+                ScreenLabel = null; ScreenButton = null; ScreenRect = null;
+                ScreenProgress = null; ScreenCheck = null; ScreenSlider = null; ScreenEdit = null;
+                Container = null;
             }
 
-            public void Free(bool screenSpace)
+            public void Free()
             {
-                FreeVisuals(screenSpace);
-                if (Root3D != null && GodotObject.IsInstanceValid(Root3D)) Root3D.QueueFree();
-                if (RootControl != null && GodotObject.IsInstanceValid(RootControl)) RootControl.QueueFree();
+                FreeVisuals();
             }
         }
     }

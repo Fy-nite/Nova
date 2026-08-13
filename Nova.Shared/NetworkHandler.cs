@@ -155,15 +155,65 @@ public class NetworkHandler
                     break;
 
                 case MessageType.PlayerSync:
+                {
+                    var host = _root.Registry.Get<NetworkHost>("NetworkHost");
+                    bool relay = false;
+                    long serverId = 0;
+                    if (host != null)
+                    {
+                        // Host: remap the sender's per-process local element ID to the
+                        // globally-unique server-assigned ID so the own-player filter can
+                        // never drop this sync, then relay it to the other clients.
+                        serverId = host.GetServerAssignedPlayerId(message);
+                        if (serverId != 0)
+                        {
+                            try
+                            {
+                                var dto = AncientCompressor.Decompress<PlayerSyncDTO>(message.Message);
+                                if (dto != null)
+                                {
+                                    dto.PlayerId = serverId;
+                                    message.Message = AncientCompressor.Compress(dto);
+                                    relay = true;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                GD.PrintErr($"[Network] Failed to remap PlayerSync player id: {ex.Message}");
+                            }
+                        }
+                    }
                     _remotePlayerManager.HandlePlayerSync(message, _debugMode);
+                    if (relay)
+                    {
+                        if (_debugMode) GD.Print($"[Network] \U0001f501 Relaying PlayerSync for server player {serverId} to other clients");
+                        _root.Cables.SendData(message);
+                    }
                     break;
+                }
 
                 case MessageType.PlayerLeave:
                     _remotePlayerManager.HandlePlayerLeave(message, _debugMode);
                     break;
 
+                case MessageType.RpcCall:
+                    HandleRpcCall(message);
+                    break;
+
                 case MessageType.WorldUpdate:
                     _worldSyncHandler.HandleWorldUpdate(message);
+                    break;
+
+                case MessageType.WorldElementUpdate:
+                    _worldSyncHandler.HandleWorldElementUpdate(message);
+                    break;
+
+                case MessageType.ComponentRemoved:
+                    _worldSyncHandler.HandleComponentRemoved(message);
+                    break;
+
+                case MessageType.WorldDelta:
+                    _worldSyncHandler.HandleWorldDelta(message);
                     break;
             }
         }
@@ -174,6 +224,23 @@ public class NetworkHandler
     }
 
     // ── Player sync ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Handle a remote code execution call. The host relays it to the other clients
+    /// (the sender is skipped via SenderToken) and every peer — including the host —
+    /// invokes it locally against its own matching element.
+    /// </summary>
+    private void HandleRpcCall(MessageDTO message)
+    {
+        if (message.Message == null) return;
+        var dto = AncientCompressor.Decompress<RpcCallDTO>(message.Message);
+        if (dto == null) return;
+
+        if (_root.Registry.Get<NetworkHost>("NetworkHost") != null)
+            _root.Cables.SendData(message);
+
+        RpcDispatcher.InvokeLocal(_root, dto);
+    }
 
     /// <summary>
     /// Walk the Player element's XR_Root → head/hand children and copy their
@@ -263,9 +330,15 @@ public class NetworkHandler
                 GD.Print($"  Components: {player.Components.Count}");
             }
 
+            // When running as host, announce ourselves under the server-assigned unique ID
+            // (never the local element ID, which peers may share). Clients keep their local ID
+            // and the host remaps it on arrival.
+            var host = _root.Registry.Get<NetworkHost>("NetworkHost");
+            long syncPlayerId = host != null ? host.HostPlayerId : player.Id;
+
             var syncDto = new PlayerSyncDTO
             {
-                PlayerId = player.Id,
+                PlayerId = syncPlayerId,
                 PlayerName = player.Name ?? "Player",
                 Position = player.LocalTransform.Position,
                 Rotation = player.LocalTransform.Rotation,

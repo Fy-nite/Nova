@@ -226,8 +226,10 @@ public class RemotePlayerManager
         }
 
         if (debugMode) GD.Print($"[Network]   Adding remote player to world...");
-        _root.SelectedWorld?.AddElement(remotePlayer);
-        if (debugMode) GD.Print($"[Network]   \u2705 Added to world. World now has {_root.SelectedWorld?.Root.Count ?? 0} root elements");
+        // Host remote players in PersistentWorld (like the local player) so they survive
+        // WorldSync world switches instead of being stranded in a pre-sync sample world.
+        _root.PersistentWorld.AddElement(remotePlayer);
+        if (debugMode) GD.Print($"[Network]   \u2705 Added to PersistentWorld. PersistentWorld now has {_root.PersistentWorld.Root.Count} root elements");
 
         _root.Registry.Get<DirtyTracker>("DirtyTracker")?.TrackElement(remotePlayer);
         // Initialise tween state so interpolation starts from the correct position

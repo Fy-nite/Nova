@@ -91,6 +91,11 @@ public class WorldSyncHandler
         // Track the new world's elements for dirty-change propagation
         dt?.TrackWorld(selected);
 
+        // Everything in the server world is host-owned: clients must not simulate
+        // these bodies locally (they become kinematic followers driven by the host).
+        foreach (var el in selected.Root)
+            MarkReplicatedRecursive(el);
+
         GD.Print($"[Network] WorldSync applied as '{serverWorldName}' ({selected.Root.Count} root elements). PersistentWorld (Player) untouched.");
     }
 
@@ -184,6 +189,125 @@ public class WorldSyncHandler
         }
     }
 
+    // ── WorldDelta ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Apply a host-authoritative element lifecycle batch: spawn the created elements
+    /// (adopting the host's sequential ids so the same element has the same id on every
+    /// peer) and despawn the deleted ones. Runs with DeltaTracker capture suppressed so
+    /// applying a delta never re-broadcasts it back.
+    /// </summary>
+    public void HandleWorldDelta(MessageDTO message)
+    {
+        WorldDeltaDTO delta = null;
+        try { delta = AncientCompressor.Decompress<WorldDeltaDTO>(message.Message); }
+        catch (Exception ex) { GD.PrintErr($"[Network] Failed to deserialize WorldDelta: {ex.Message}"); }
+
+        if (delta == null) return;
+        var dt = _root.Registry.Get<DirtyTracker>("DirtyTracker");
+
+        lock (_root)
+        {
+            foreach (var create in delta.Creates)
+            {
+                try { ApplyElementCreate(create, dt); }
+                catch (Exception ex) { GD.PrintErr($"[Network] Error applying element create '{create?.Element?.Name}': {ex.Message}"); }
+            }
+
+            foreach (var deleteId in delta.Deletes)
+            {
+                try { ApplyElementDelete(deleteId, dt); }
+                catch (Exception ex) { GD.PrintErr($"[Network] Error applying element delete {deleteId}: {ex.Message}"); }
+            }
+        }
+    }
+
+    private void ApplyElementCreate(ElementCreateDTO create, DirtyTracker? dt)
+    {
+        if (create?.Element == null) return;
+
+        // Id already exists (duplicate delta / already applied) → skip.
+        if (_root.FindElement(e => e.Id == create.Element.Id) != null) return;
+
+        var element = AncientCompressor.DecompressElement(create.Element);
+        if (element == null) return;
+
+        IWorldElement? parent = null;
+        if (create.ParentId != 0)
+            parent = _root.FindElement(e => e.Id == create.ParentId);
+
+            dt?.WithCaptureSuppressed(() =>
+            {
+                if (parent != null)
+                {
+                    parent.AddChild(element);
+                    GD.Print($"[Network] WorldDelta create: '{element.Name}' (Id={element.Id}) attached to '{parent.Name}'");
+                }
+                else
+                {
+                    var world = ResolveDeltaWorld(create.WorldName);
+                    world?.AddElement(element);
+                    GD.Print($"[Network] WorldDelta create: '{element.Name}' (Id={element.Id}) added to '{world?.WorldName}'");
+                }
+
+                // Host-owned subtree: never simulate locally, follow the host instead.
+                MarkReplicatedRecursive(element);
+
+                dt?.TrackElement(element);
+            });
+    }
+
+    private void ApplyElementDelete(long deleteId, DirtyTracker? dt)
+    {
+        var element = _root.FindElement(e => e.Id == deleteId);
+        if (element == null) return;
+
+        dt?.WithCaptureSuppressed(() =>
+        {
+            dt?.UntrackElement(element);
+
+            if (element.Parent != null)
+            {
+                var parent = element.Parent;
+                parent.RemoveChild(element);
+                GD.Print($"[Network] WorldDelta delete: '{element.Name}' (Id={element.Id}) removed from '{parent.Name}'");
+            }
+            else
+            {
+                var world = _root.GetWorldForElement(element);
+                world?.RemoveElement(element);
+                GD.Print($"[Network] WorldDelta delete: '{element.Name}' (Id={element.Id}) removed from world");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Resolve the local world a delta root-create belongs to. Prefers the world the
+    /// client is actually viewing when it corresponds to the sender's world (clients
+    /// receive the server world renamed "Server_&lt;name&gt;"), then a name match, then
+    /// falls back to the selected world.
+    /// </summary>
+    private World? ResolveDeltaWorld(string? worldName)
+    {
+        if (_root.SelectedWorld != null)
+        {
+            var sw = _root.SelectedWorld.WorldName;
+            if (sw == worldName || sw == "Server_" + worldName)
+                return _root.SelectedWorld;
+        }
+
+        if (!string.IsNullOrEmpty(worldName))
+        {
+            foreach (var w in _root.Worlds)
+            {
+                if (w.WorldName == worldName || w.WorldName == "Server_" + worldName)
+                    return w;
+            }
+        }
+
+        return _root.SelectedWorld;
+    }
+
     // ── WorldUpdate ─────────────────────────────────────────────────
 
     public void HandleWorldUpdate(MessageDTO message)
@@ -193,6 +317,8 @@ public class WorldSyncHandler
         catch { }
 
         if (batch == null || batch.Components.Count == 0) return;
+
+        var dt = _root.Registry.Get<DirtyTracker>("DirtyTracker");
 
         lock (_root)
         {
@@ -205,7 +331,124 @@ public class WorldSyncHandler
                     var incoming = AncientCompressor.DecompressComponent(csDto);
                     if (incoming == null) continue;
 
-                    ApplyComponentUpdateRecursive(incoming, snapshot.Id);
+                    if (ApplyComponentUpdateRecursive(incoming, snapshot.Id))
+                        continue;
+
+                    // Component not present locally: it was added to an existing element
+                    // after creation (adds on brand-new elements arrive via the create delta).
+                    // Attach it so later updates can match by id.
+                    if (snapshot.ElementId != 0 && incoming.Id != 0)
+                    {
+                        var target = _root.FindElement(e => e.Id == snapshot.ElementId);
+                        if (target != null && target.Components.Find(c => c.Id == incoming.Id) == null)
+                        {
+                            dt?.WithCaptureSuppressed(() => target.AddComponent(incoming));
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+    }
+
+    // ── WorldElementUpdate ────────────────────────────────────────────
+
+    /// <summary>
+    /// Apply a host-authoritative element state update: transform, name, description and
+    /// parent. Elements not yet present locally are dropped — full-state updates repeat at
+    /// ~30Hz so a missed update is self-corrected by the next one.
+    /// </summary>
+    public void HandleWorldElementUpdate(MessageDTO message)
+    {
+        ElementUpdateBatchDTO batch = null;
+        try { batch = AncientCompressor.Decompress<ElementUpdateBatchDTO>(message.Message); }
+        catch { }
+
+        if (batch == null || batch.Elements.Count == 0) return;
+
+        var dt = _root.Registry.Get<DirtyTracker>("DirtyTracker");
+
+        lock (_root)
+        {
+            foreach (var update in batch.Elements)
+            {
+                try { ApplyElementUpdate(update, dt); }
+                catch (Exception ex) { GD.PrintErr($"[Network] Error applying element update {update?.Id}: {ex.Message}"); }
+            }
+        }
+    }
+
+    private void ApplyElementUpdate(ElementUpdateDTO update, DirtyTracker? dt)
+    {
+        if (update == null) return;
+        var element = _root.FindElement(e => e.Id == update.Id);
+        if (element == null) return; // race: not created yet → drop, self-corrects
+
+        dt?.WithCaptureSuppressed(() =>
+        {
+            element.Name = update.Name;
+            element.Description = update.Description;
+
+            var lt = element.LocalTransform;
+            lt.Position = update.Position;
+            lt.Rotation = update.Rotation;
+            lt.Scale = update.Scale;
+            element.LocalTransform = lt;
+
+            var currentParentId = element.Parent?.Id ?? 0;
+            if (currentParentId != update.ParentId)
+                ReparentElement(element, update.ParentId);
+        });
+    }
+
+    private void ReparentElement(IWorldElement element, long newParentId)
+    {
+        if (newParentId == 0)
+        {
+            var world = _root.GetWorldForElement(element);
+            if (world == null) return;
+            if (element.Parent != null)
+                element.Parent.RemoveChild(element);
+            if (!world.Root.Contains(element))
+                world.AddElement(element);
+        }
+        else
+        {
+            var newParent = _root.FindElement(e => e.Id == newParentId);
+            if (newParent == null) return;
+            if (element.Parent != null)
+                element.Parent.RemoveChild(element);
+            newParent.AddChild(element);
+        }
+    }
+
+    // ── ComponentRemoved ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Apply a host-authoritative component removal batch: drop the listed components
+    /// from the given element, with capture suppressed so the removal is never re-broadcast.
+    /// </summary>
+    public void HandleComponentRemoved(MessageDTO message)
+    {
+        ComponentRemovalDTO dto = null;
+        try { dto = AncientCompressor.Decompress<ComponentRemovalDTO>(message.Message); }
+        catch { }
+        if (dto == null || dto.ComponentIds.Count == 0) return;
+
+        var dt = _root.Registry.Get<DirtyTracker>("DirtyTracker");
+
+        lock (_root)
+        {
+            var element = _root.FindElement(e => e.Id == dto.ElementId);
+            if (element == null) return;
+
+            foreach (var componentId in dto.ComponentIds)
+            {
+                try
+                {
+                    var comp = element.Components.Find(c => c.Id == componentId);
+                    if (comp == null) continue;
+                    dt?.WithCaptureSuppressed(() => element.RemoveComponent(comp));
                 }
                 catch { }
             }
@@ -214,7 +457,7 @@ public class WorldSyncHandler
 
     // ── Helper methods ──────────────────────────────────────────────
 
-    private void ApplyComponentUpdateRecursive(IComponent incoming, long targetId)
+    private bool ApplyComponentUpdateRecursive(IComponent incoming, long targetId)
     {
         bool found = false;
         foreach (var w in _root.ActiveWorlds)
@@ -229,6 +472,7 @@ public class WorldSyncHandler
             }
             if (found) break;
         }
+        return found;
     }
 
     private static bool TryApplyToElement(IWorldElement element, IComponent incoming, long targetId)
@@ -309,5 +553,22 @@ public class WorldSyncHandler
                 count += CountElementsRecursive(el.Children);
         }
         return count;
+    }
+
+    /// <summary>
+    /// Flag a replicated element subtree (and every <see cref="PhysicsBodyComponent"/>
+    /// beneath it) as host-owned so clients run those bodies as kinematic followers
+    /// instead of locally simulating them.
+    /// </summary>
+    private static void MarkReplicatedRecursive(IWorldElement element)
+    {
+        if (element == null) return;
+        var pbc = element.GetComponent<PhysicsBodyComponent>();
+        if (pbc != null) pbc.IsReplicated = true;
+        if (element.Children != null)
+        {
+            foreach (var child in element.Children)
+                MarkReplicatedRecursive(child);
+        }
     }
 }
