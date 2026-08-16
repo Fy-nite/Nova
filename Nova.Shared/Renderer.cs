@@ -50,6 +50,15 @@ namespace V12TwoDog
 		// instead of lagging behind the 60Hz snapshot + interpolation pipeline.
 		private readonly Dictionary<long, Node3D> _directParents = new();
 
+		// ── Editor direct-drive ──
+		// Elements the editor drives on the main thread (the orbit camera, and
+		// the object being dragged with the transform gizmo). ApplySnapshot
+		// keeps their node, parenting and properties but skips the transform
+		// write + interpolation, so per-frame editor input renders immediately
+		// instead of being batched through the 60Hz worker snapshot + interp
+		// pipeline (which made fast camera/TRS movement lag).
+		private readonly HashSet<long> _editorDriven = new();
+
 		// ── UI scene viewports ──
 		// Viewport element id → SubViewport, registered by WorldCanvasSystem.
 		// Elements whose snapshot carries that ViewportId get reparented inside
@@ -68,6 +77,144 @@ namespace V12TwoDog
 		public void UnregisterSceneViewport(long viewportId)
 		{
 			_sceneViewports.Remove(viewportId);
+		}
+
+		/// <summary>Get the registered SubViewport for a viewport element id, if any.</summary>
+		public SubViewport? GetSceneViewport(long viewportId)
+		{
+			return _sceneViewports.TryGetValue(viewportId, out var vp) ? vp : null;
+		}
+
+		/// <summary>Id of the viewport an element last rendered in (0 = main screen).</summary>
+		public long GetElementViewportId(long elementId)
+		{
+			return _appliedSnapshots.TryGetValue(elementId, out var rs) ? rs.ViewportId : 0;
+		}
+
+		// ── 3D picking (click to select in UI scene viewports) ──
+
+		/// <summary>
+		/// Cast a ray from the given UI viewport's current camera through
+		/// <paramref name="screenPos"/> (viewport-local pixels, top-left origin)
+		/// against every rendered mesh in that viewport. Returns the element id
+		/// of the closest hit, or 0 when nothing is hit. Uses manual triangle
+		/// intersection so no physics bodies are needed.
+		/// </summary>
+		public long PickElement(long viewportId, Vector2 screenPos)
+		{
+			if (!_sceneViewports.TryGetValue(viewportId, out var vp) || !GodotObject.IsInstanceValid(vp)) return 0;
+			var cam = vp.GetCamera3D();
+			if (cam == null) return 0;
+			var origin = cam.ProjectRayOrigin(screenPos);
+			var dir = cam.ProjectRayNormal(screenPos);
+
+			long bestId = 0;
+			float bestT = float.MaxValue;
+			foreach (var kvp in _nodesByElementId)
+			{
+				if (!GodotObject.IsInstanceValid(kvp.Value) || kvp.Value is not MeshInstance3D mi) continue;
+				if (mi.Mesh == null) continue;
+				if (ViewportIdOfNode(mi) != viewportId) continue;
+				if (RayMesh(mi, origin, dir, out float t, out _) && t < bestT)
+				{
+					bestT = t;
+					bestId = kvp.Key;
+				}
+			}
+			return bestId;
+		}
+
+		/// <summary>Walk a node's parents to find which registered scene viewport
+		/// (if any) it belongs to. 0 = not inside any UI viewport.</summary>
+		private long ViewportIdOfNode(Node3D node)
+		{
+			Node cur = node;
+			while (cur != null)
+			{
+				foreach (var kvp in _sceneViewports)
+				{
+					if (GodotObject.IsInstanceValid(kvp.Value) && kvp.Value == cur)
+						return kvp.Key;
+				}
+				cur = cur.GetParent();
+			}
+			return 0;
+		}
+
+		/// <summary>Ray vs every triangle of a MeshInstance3D's surface 0 (in world
+		/// space). Returns the nearest hit distance and point.</summary>
+		public static bool RayMesh(MeshInstance3D mi, Vector3 origin, Vector3 dir, out float t, out Vector3 hit)
+		{
+			t = float.MaxValue;
+			hit = Vector3.Zero;
+			var mesh = mi.Mesh;
+			if (mesh == null || mesh.GetSurfaceCount() == 0) return false;
+
+			var arrays = mesh.SurfaceGetArrays(0);
+			var vertData = arrays[(int)Mesh.ArrayType.Vertex];
+			if (vertData.VariantType != Variant.Type.PackedVector3Array) return false;
+			var verts = vertData.AsVector3Array();
+			if (verts.Length < 3) return false;
+
+			var idxData = arrays[(int)Mesh.ArrayType.Index];
+			int[]? idx = idxData.VariantType == Variant.Type.PackedInt32Array ? idxData.AsInt32Array() : null;
+
+			var xform = mi.GlobalTransform;
+			var tri = new Vector3[3];
+			bool any = false;
+
+			if (idx != null)
+			{
+				for (int i = 0; i + 2 < idx.Length; i += 3)
+				{
+					tri[0] = xform * verts[idx[i]];
+					tri[1] = xform * verts[idx[i + 1]];
+					tri[2] = xform * verts[idx[i + 2]];
+					if (TriRay(tri[0], tri[1], tri[2], origin, dir, out float tt))
+					{
+						if (tt < t) { t = tt; any = true; }
+					}
+				}
+			}
+			else
+			{
+				for (int i = 0; i + 2 < verts.Length; i += 3)
+				{
+					tri[0] = xform * verts[i];
+					tri[1] = xform * verts[i + 1];
+					tri[2] = xform * verts[i + 2];
+					if (TriRay(tri[0], tri[1], tri[2], origin, dir, out float tt))
+					{
+						if (tt < t) { t = tt; any = true; }
+					}
+				}
+			}
+
+			if (any) hit = origin + dir * t;
+			return any;
+		}
+
+		/// <summary>Möller–Trumbore ray/triangle intersection. t is the ray
+		/// parameter (distance along the ray) of the hit, if any.</summary>
+		private static bool TriRay(Vector3 a, Vector3 b, Vector3 c, Vector3 origin, Vector3 dir, out float t)
+		{
+			t = 0f;
+			var e1 = b - a;
+			var e2 = c - a;
+			var p = dir.Cross(e2);
+			float det = e1.Dot(p);
+			if (Mathf.Abs(det) < 1e-9f) return false;
+			float inv = 1f / det;
+			var s = origin - a;
+			float u = s.Dot(p) * inv;
+			if (u < 0f || u > 1f) return false;
+			var q = s.Cross(e1);
+			float v = dir.Dot(q) * inv;
+			if (v < 0f || u + v > 1f) return false;
+			float tt = e2.Dot(q) * inv;
+			if (tt < 0f) return false;
+			t = tt;
+			return true;
 		}
 
 		/// <summary>True when the given viewport has a snapshot camera marked
@@ -91,6 +238,30 @@ namespace V12TwoDog
 				_directParents.Remove(elementId);
 			else
 				_directParents[elementId] = parent;
+		}
+
+		/// <summary>
+		/// Mark an element as driven directly by the editor on the main thread
+		/// (the orbit camera, or an object being dragged with the transform
+		/// gizmo). ApplySnapshot keeps the node's parenting and properties but
+		/// skips its transform write + interpolation, so the editor's per-frame
+		/// transform lands immediately instead of waiting on the 60Hz worker
+		/// snapshot. Pass false to return the element to normal snapshot
+		/// rendering.
+		/// </summary>
+		public void SetEditorDriven(long elementId, bool driven)
+		{
+			if (driven) _editorDriven.Add(elementId);
+			else _editorDriven.Remove(elementId);
+		}
+
+		/// <summary>Get the Godot render node for an element, if it exists and
+		/// is still valid. Used by the editor to drive transforms directly.</summary>
+		public Node3D? GetNode(long elementId)
+		{
+			return _nodesByElementId.TryGetValue(elementId, out var node) && GodotObject.IsInstanceValid(node)
+				? node
+				: null;
 		}
 
 		public bool LockMouse { get; set; }
@@ -398,6 +569,19 @@ namespace V12TwoDog
 
 				if (node.GetParent() != targetParent)
 					node.Reparent(targetParent);
+
+				if (_editorDriven.Contains(rs.ElementId))
+				{
+					// Editor drives this node's transform directly on the main
+					// thread (orbit camera, gizmo drag) so input isn't batched
+					// through the 60Hz snapshot + interpolation pipeline. The
+					// reparent above keeps it in the right viewport; the editor
+					// writes the transform after ApplySnapshot each frame.
+					_nodeAnims.Remove(rs.ElementId);
+					_nodeLastTargets.Remove(rs.ElementId);
+					UpdateNodeProperties(node, rs);
+					continue;
+				}
 
 				if (directParented)
 				{

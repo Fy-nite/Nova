@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<World name="Scene">
+	<Element name="Sun">
+	<Component type="TransformComponent" X="0" Y="3.374" Z="-0.534" RotationX="-23.038" RotationY="69.223" RotationZ="-109.291" />
+	<Component type="GenericLightComponent" ColorR="1" ColorG="0.97" ColorB="0.92" Energy="1.2" ShadowEnabled="True" Type="Directional" Range="100" Angle="45" SpotSoftness="0.5" />
+	</Element>
+	<Element name="Ground">
+	<Component type="TransformComponent" X="0" Y="0" Z="0" />
+	<Component type="MeshComponent" Shape="Box" Width="12" Height="0.2" Depth="12" />
+	<Component type="MeshRenderer" MeshTargetName="Mesh" />
+	<Component type="MaterialComponent" R="0.24" G="0.26" B="0.3" A="1" Metallic="0" Roughness="0.9" Uv1OffsetX="0" Uv1OffsetY="0" Uv1ScaleX="1" Uv1ScaleY="1" />
+	<Component type="ScaleComponent" ScaleX="3" ScaleY="0.1" ScaleZ="3" />
+	</Element>
+	<Element name="ViewportCamera">
+	<Component type="TransformComponent" X="14.029" Y="23.113" Z="-7.006" RotationX="-35.75" RotationY="155.337" RotationZ="0" />
+	<Component type="CameraComponent" Projection="Perspective" Fov="60" NearClip="0.05" FarClip="1000" OrthoSize="5" IsCurrent="True" />
+	</Element>
+	<Element name="light">
+	<Component type="TransformComponent" X="0" Y="3.854" Z="0" RotationX="0" RotationY="0" RotationZ="0" />
+	<Component type="PointLightComponent" ColorR="1" ColorG="0" ColorB="0" Range="50" Energy="2" />
+	</Element>
+	<Element name="Wall soimething">
+	<Component type="TransformComponent" X="0" Y="2.5" Z="-17.322" RotationX="0" RotationY="0" RotationZ="0" />
+	<Component type="ScaleComponent" ScaleX="34.383" ScaleY="5.65" ScaleZ="0.429" />
+	<Component type="MeshComponent" Shape="Box" Width="1" Height="1" Depth="1" />
+	<Component type="MeshRenderer" MeshTargetName="Mesh" />
+	<Component type="MaterialComponent" R="0.7" G="0.7" B="0.75" A="1" Metallic="0.1" Roughness="0.5" Uv1OffsetX="0" Uv1OffsetY="0" Uv1ScaleX="1" Uv1ScaleY="1" />
+	</Element>
+	<Element name="fuckin another thing">
+	<Component type="TransformComponent" x="0" y="2.604" z="17.789" rotationX="0" rotationY="0" rotationZ="0" />
+	<Component type="ScaleComponent" ScaleX="36.21" ScaleY="4.496" ScaleZ="1" />
+	<Component type="MeshComponent" Shape="Box" Width="1" Height="1" Depth="1" />
+	<Component type="MeshRenderer" MeshTargetName="Mesh" />
+	<Component type="MaterialComponent" R="0.7" G="0.7" B="0.75" A="1" Metallic="0.1" Roughness="0.5" Uv1OffsetX="0" Uv1OffsetY="0" Uv1ScaleX="1" Uv1ScaleY="1" />
+	</Element>
+</World>

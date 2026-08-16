@@ -139,6 +139,11 @@ namespace V12TwoDog
             host.AddChild(AudioPlayer);
             Root.Registry.Register("IRenderer", RendererService);
 
+            // Created early so the editor gamepak can register its viewport
+            // pick/select handler during OnStart (gamepaks are loaded below).
+            _worldCanvas = new WorldCanvasSystem(host, (global::V12TwoDog.Renderer)RendererService);
+            Root.Registry.Register("WorldCanvasSystem", _worldCanvas);
+
             var renderTargetFactory = new GodotRenderTargetFactory();
             Root.Registry.Register(nameof(IRenderTargetFactory), renderTargetFactory);
 
@@ -319,7 +324,6 @@ namespace V12TwoDog
                 AfterGamepakStart();
 
             _laserVisual.Initialize(_host);
-            _worldCanvas = new WorldCanvasSystem(_host, (global::V12TwoDog.Renderer)RendererService);
 
             if (XrAvailable != true && RendererService?.LockMouse == true && _options.LockMouseOnStart)
                 SetMouseCaptured(true);
