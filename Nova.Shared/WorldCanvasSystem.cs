@@ -124,6 +124,34 @@ namespace V12TwoDog
             _interactHeld = evt.Type == InputEventType.ButtonDown;
         }
 
+        /// <summary>
+        /// Forward a Godot keyboard event to the active world-space canvas's
+        /// SubViewport so focused text fields (LineEdit) and other controls
+        /// receive key input. Only forwards when a control inside the viewport
+        /// already has focus (e.g. after a pointer click focused a LineEdit).
+        /// Called on the main thread from V12Runtime.HandleInputEvent.
+        /// </summary>
+        public void ForwardKeyEvent(global::Godot.InputEvent evt)
+        {
+            if (evt is not global::Godot.InputEventKey) return;
+            var vp = _activeCanvas?.Viewport;
+            if (vp == null) return;
+            if (vp.GetFocusedControl() == null) return;
+            vp.PushInput(evt);
+        }
+
+        /// <summary>
+        /// Returns true when a world-space canvas SubViewport currently has a
+        /// focused control (e.g. a LineEdit the player clicked into). Used to
+        /// suppress game movement/actions while typing so keystrokes don't
+        /// double up as game input.
+        /// </summary>
+        public bool HasKeyboardFocus()
+        {
+            var vp = _activeCanvas?.Viewport;
+            return vp != null && vp.GetFocusedControl() != null;
+        }
+
         private void EnsureInputRegistered()
         {
             if (_inputRegistered || _gameRoot == null) return;
