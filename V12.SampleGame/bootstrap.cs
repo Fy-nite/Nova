@@ -9,7 +9,7 @@ using V12.Core.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.Core.NetworkCable;
 using V12.WorldML;
-using V12.Bindings;
+// using V12.Bindings;
 // UI components live in V12.Components.UI but share names with physics/render
 // components (ButtonComponent, ProgressBarComponent), so alias them here.
 using UICanvas = V12.Components.UI.CanvasComponent;
@@ -42,7 +42,7 @@ namespace V12.SampleGame
             Console.WriteLine("[SampleGamePack] Initialize called");
             _gameroot = GameRoot.Instance;
             BasicRegistry.RegisterAll(_gameroot);
-            V12ScriptRuntimeRegistration.RegisterAll(_gameroot);
+            // V12ScriptRuntimeRegistration.RegisterAll(_gameroot);
         }
 
         /// <summary>

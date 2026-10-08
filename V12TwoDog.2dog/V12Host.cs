@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using V12;
 using Engine = twodog.Engine;
 
 namespace V12TwoDog
@@ -93,5 +94,11 @@ namespace V12TwoDog
             _engine?.Dispose();
             _engine = null;
         }
+
+        public void RegisterGamePak(IV12Gamepack pak)
+        {
+            //TODO: do this in V12Runtime instead of here, so we can register gamepacks after Start() too
+        }
+
     }
 }

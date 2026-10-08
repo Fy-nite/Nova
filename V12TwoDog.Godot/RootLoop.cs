@@ -29,10 +29,10 @@ public partial class RootLoop : Node3D
             // NOT load the bundled Sample Game from libs/nova/V12.SampleGame —
             // its entry assembly is used instead. Bare hosts (editor Play, plain
             // 2dog hosts) fall back to the Sample Game so they still get a scene.
-            GamepakAssemblies = DiscoverHostGamepaks() ?? new[]
-            {
-                typeof(V12.SampleGame.SampleGamePack).Assembly
-            },
+            GamepakAssemblies = DiscoverHostGamepaks(), //?? new[]
+            // {
+            //     typeof(V12.SampleGame.SampleGamePack).Assembly
+            // },
             ShowLauncher = false,
             CreateEmptyWorldIfNoPak = false,
         };
@@ -80,27 +80,59 @@ public partial class RootLoop : Node3D
 
     /// <summary>
     /// Returns the embedding app's own assembly when it defines at least one
-    /// <see cref="V12.IV12Gamepack"/> implementation, otherwise null (which
-    /// makes the caller fall back to the bundled Sample Game).
+    /// <see cref="V12.IV12Gamepack"/> implementation, otherwise the first of its
+    /// direct references that does (e.g. StudioLauncher references V12StudioPak),
+    /// otherwise null (which leaves the runtime without a pak — no Sample Game
+    /// fallback here, since hosts that carry a pak are expected to reference it).
     /// </summary>
     private static System.Reflection.Assembly[]? DiscoverHostGamepaks()
     {
         var entry = System.Reflection.Assembly.GetEntryAssembly();
         if (entry == null) return null;
+
+        if (DefinesGamepak(entry)) return new[] { entry };
+
+        // Hosts such as StudioLauncher keep the pak as a direct reference and touch
+        // a type in it from Main so the reference survives trimming — but the pak
+        // type itself lives in that referenced assembly, not the entry one. Only
+        // direct references are scanned (never transitive ones) so a library that
+        // happens to ship a pak, e.g. V12.Bindings, is never picked by accident.
+        foreach (var name in entry.GetReferencedAssemblies())
+        {
+            try
+            {
+                var asm = System.Reflection.Assembly.Load(name);
+                if (DefinesGamepak(asm))
+                {
+                    GD.Print($"[RootLoop] Host gamepak assembly: '{asm.GetName().Name}' (referenced by '{entry.GetName().Name}')");
+                    return new[] { asm };
+                }
+            }
+            catch
+            {
+                // Reference could not be loaded (native or missing) — keep looking.
+            }
+        }
+        return null;
+    }
+
+    /// <summary>True when <paramref name="assembly"/> defines a concrete <see cref="V12.IV12Gamepack"/>.</summary>
+    private static bool DefinesGamepak(System.Reflection.Assembly assembly)
+    {
         try
         {
-            foreach (var type in entry.GetTypes())
+            foreach (var type in assembly.GetTypes())
             {
                 if (type.IsAbstract || type.IsInterface) continue;
                 if (typeof(V12.IV12Gamepack).IsAssignableFrom(type))
-                    return new[] { entry };
+                    return true;
             }
         }
         catch
         {
-            // Reflection over the entry assembly failed — fall back to the Sample Game.
+            // Reflection over this assembly failed — treat it as having no pak.
         }
-        return null;
+        return false;
     }
 
     public override void _PhysicsProcess(double delta)

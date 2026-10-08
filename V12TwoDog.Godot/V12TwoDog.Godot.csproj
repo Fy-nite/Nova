@@ -18,7 +18,7 @@
          and RootLoop can auto-start it (see RootLoop._Ready) — this is what
          lets the Sample Game run when pressing Play in the editor, including
          on a VR headset, without any gamepak DLL scanning. -->
-    <ProjectReference Include="..\V12.SampleGame\V12.SampleGame.csproj" />
+    <!-- <ProjectReference Include="..\V12.SampleGame\V12.SampleGame.csproj" /> -->
   </ItemGroup>
 	
   <ItemGroup>

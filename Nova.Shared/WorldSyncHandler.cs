@@ -564,7 +564,7 @@ public class WorldSyncHandler
     {
         if (element == null) return;
         var pbc = element.GetComponent<PhysicsBodyComponent>();
-        if (pbc != null) pbc.IsReplicated = true;
+        // if (pbc != null) pbc.IsReplicated = true;
         if (element.Children != null)
         {
             foreach (var child in element.Children)
