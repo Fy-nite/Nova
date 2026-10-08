@@ -10,16 +10,16 @@ namespace V12TwoDog
 {
     /// <summary>
     /// Host-side transform gizmo rendered inside a UI scene viewport, with
-    /// three modes:
+    /// three modes (T / R / S): translate — axis arrows, rotate — axis rings,
+    /// scale — axis shafts with tip cubes plus a centre cube for uniform
+    /// scale.
     ///
-    /// <list type="bullet">
-    /// <item>Translate — world-axis arrows (X red / Y green / Z blue); dragging
-    /// an arrow moves the element along that axis.</item>
-    /// <item>Rotate — torus rings around the element; dragging a ring rotates
-    /// it around that axis.</item>
-    /// <item>Scale — axis cubes + a centre cube; dragging an axis cube scales
-    /// along that axis, dragging the centre scales uniformly.</item>
-    /// </list>
+    /// The geometry is NOT built here: both this host and the MonoGame host
+    /// draw the one canonical model in <see cref="TransformGizmo"/> (V12
+    /// core), so every renderer shows and grabs the same gizmo. This class
+    /// only projects those segments into the Godot viewport (one
+    /// <see cref="ImmediateMesh"/> of world-space lines), screen-space grabs,
+    /// and drives the drag.
     ///
     /// The V12 world owns the truth: the gizmo writes back into the element's
     /// LocalTransform. While dragging, the target is pinned editor-driven and
@@ -34,7 +34,10 @@ namespace V12TwoDog
     {
         private readonly Renderer _renderer;
         private Node3D? _root;
-        private readonly Dictionary<int, MeshInstance3D> _handles = new();
+        private MeshInstance3D? _lines;
+        private ImmediateMesh? _mesh;
+        private SubViewport? _viewport;
+        private readonly List<TransformGizmo.Segment> _scratch = new();
 
         private IWorldElement? _target;
         private GizmoMode _mode = GizmoMode.Translate;
@@ -48,13 +51,14 @@ namespace V12TwoDog
         private System.Numerics.Vector3 _startScale;
         private float _startAngle;
 
-        private static readonly Color[] AxisColors =
+        // Canonical axes from V12's model, mirrored into Godot's vector type
+        // for the drag math. Components are identical — only the type differs.
+        private static readonly Vector3[] AxisDirs =
         {
-            new(0.95f, 0.28f, 0.28f),
-            new(0.35f, 0.85f, 0.4f),
-            new(0.35f, 0.6f, 1f)
+            TransformGizmo.AxisDirs[0].ToGodot(),
+            TransformGizmo.AxisDirs[1].ToGodot(),
+            TransformGizmo.AxisDirs[2].ToGodot(),
         };
-        private static readonly Vector3[] AxisDirs = { Vector3.Right, Vector3.Up, Vector3.Forward };
 
         public SceneGizmo(Renderer renderer) => _renderer = renderer;
 
@@ -79,51 +83,56 @@ namespace V12TwoDog
             }
             EnsureBuilt(viewport);
             if (_root != null) _root.Visible = true;
-            SyncPosition();
+            RebuildLines();
         }
 
-        /// <summary>Switch gizmo mode and rebuild the handles for it.</summary>
+        /// <summary>Switch gizmo mode and rebuild the lines for it.</summary>
         public void SetMode(GizmoMode mode)
         {
             if (_mode == mode) return;
             _mode = mode;
             CancelDrag();
             if (_root != null && _target != null && _root.Visible)
-                RebuildHandles();
+                RebuildLines();
         }
 
-        /// <summary>Per-frame upkeep: follow the target unless the user is dragging.</summary>
+        /// <summary>Per-frame upkeep: rebuild the lines so the gizmo follows
+        /// the target (also mid-drag — the camera is fixed during drags, the
+        /// pivot moves).</summary>
         public void Update()
         {
-            if (_dragHandle >= 0) return;
             if (_target == null || _root == null || !_root.Visible) return;
-            SyncPosition();
+            RebuildLines();
         }
 
-        /// <summary>Try to grab a gizmo handle at <paramref name="pos"/>. Returns
-        /// true when a drag starts (caller should skip world picking).</summary>
+        /// <summary>Try to grab a gizmo handle at <paramref name="pos"/>.
+        /// Returns true when a drag starts (caller should skip world picking).</summary>
         public bool HandleMouseDown(Vector2 pos, SubViewport viewport)
         {
             if (_target == null || _root == null || !_root.Visible) return false;
             var cam = viewport.GetCamera3D();
             if (cam == null) return false;
+            _viewport = viewport;
+
+            // Screen-space test against the model's own segments — exactly
+            // what the overlay draws is exactly what the hand grabs.
+            BuildSegments(cam);
+            int hit = -1;
+            float best = TransformGizmo.GrabThresholdPx;
+            foreach (var seg in _scratch)
+            {
+                var a = seg.A.ToGodot();
+                var b = seg.B.ToGodot();
+                if (cam.IsPositionBehind(a) || cam.IsPositionBehind(b)) continue;
+                float d = DistToSegment(pos, cam.UnprojectPosition(a), cam.UnprojectPosition(b));
+                if (d >= best) continue;
+                best = d;
+                hit = seg.Handle;
+            }
+            if (hit < 0) return false;
 
             var origin = cam.ProjectRayOrigin(pos);
             var dir = cam.ProjectRayNormal(pos);
-
-            int hit = -1;
-            float bestT = float.MaxValue;
-            foreach (var kvp in _handles)
-            {
-                if (GodotObject.IsInstanceValid(kvp.Value)
-                    && Renderer.RayMesh(kvp.Value, origin, dir, out float t, out _)
-                    && t < bestT)
-                {
-                    bestT = t;
-                    hit = kvp.Key;
-                }
-            }
-            if (hit < 0) return false;
 
             // Pin the target to direct main-thread driving for the drag: the
             // 60Hz worker snapshot + interpolation pipeline otherwise lags fast
@@ -145,7 +154,7 @@ namespace V12TwoDog
                     _startHit = RayAxisHit(origin, dir, startPos, camFwd);
                     break;
                 case GizmoMode.Scale:
-                    if (hit == 6)
+                    if (hit == TransformGizmo.CenterHandle)
                     {
                         // Uniform cube: anchor on the camera-forward plane so the
                         // drag delta is camera-relative (toward/away zooms).
@@ -204,7 +213,9 @@ namespace V12TwoDog
             if (_root != null && GodotObject.IsInstanceValid(_root))
                 _root.QueueFree();
             _root = null;
-            _handles.Clear();
+            _lines = null;
+            _mesh = null;
+            _viewport = null;
             _target = null;
         }
 
@@ -226,7 +237,6 @@ namespace V12TwoDog
                 Rotation = lt.Rotation,
                 Scale = lt.Scale
             };
-            if (_root != null) _root.Position = newPos.ToGodot();
         }
 
         private void DragScale(Vector3 origin, Vector3 dir)
@@ -234,7 +244,7 @@ namespace V12TwoDog
             var targetPos = _startPosSN.ToGodot();
             var lt = _target!.LocalTransform;
 
-            if (_dragHandle == 6)
+            if (_dragHandle == TransformGizmo.CenterHandle)
             {
                 // Centre cube → uniform scale. Anchor-style ratio along the
                 // camera-forward plane: factor = current/start signed distance
@@ -256,7 +266,7 @@ namespace V12TwoDog
 
             int axisIdx = _dragHandle % 3;
             var axis = AxisDirs[axisIdx];
-            var camFwd = -_dragCamera!.GlobalTransform.Basis.Z;
+            var camFwd = _dragCamera!.GlobalTransform.Basis.Z;
             var hit2 = RayAxisHit(origin, dir, targetPos, camFwd);
             // Anchor-style ratio: scale factor = current/start signed distance
             // from the pivot along the axis (Blender-style). Grabbing the end
@@ -298,6 +308,60 @@ namespace V12TwoDog
             };
         }
 
+        // ── Model projection ──────────────────────────────────────────────
+
+        /// <summary>Fill <see cref="_scratch"/> with the canonical gizmo
+        /// segments around the target, sized for this camera.</summary>
+        private void BuildSegments(Camera3D cam)
+        {
+            if (_target == null) { _scratch.Clear(); return; }
+            var origin = TargetPosSN();
+            float dist = cam.GlobalPosition.DistanceTo(origin.ToGodot());
+            float size = TransformGizmo.ScreenSizeFromFov(dist, cam.Fov);
+            var look = -cam.GlobalTransform.Basis.Z;
+            TransformGizmo.Build(_mode, origin, size,
+                new System.Numerics.Vector3(look.X, look.Y, look.Z), _scratch);
+        }
+
+        /// <summary>Rebuild the line mesh from the model — world-space
+        /// segments, one immediate-mode surface, rebuilt whenever the target,
+        /// mode or camera distance changes (cheap: a few dozen lines).</summary>
+        private void RebuildLines()
+        {
+            if (_mesh == null || _target == null) return;
+            var cam = _viewport?.GetCamera3D();
+            if (cam == null) return;
+            BuildSegments(cam);
+
+            _mesh.ClearSurfaces();
+            if (_scratch.Count == 0) return;
+            _mesh.SurfaceBegin(Mesh.PrimitiveType.Lines);
+            foreach (var seg in _scratch)
+            {
+                var c = new Color(
+                    seg.Color.R / 255f,
+                    seg.Color.G / 255f,
+                    seg.Color.B / 255f,
+                    seg.Color.A / 255f);
+                _mesh.SurfaceSetColor(c);
+                _mesh.SurfaceAddVertex(seg.A.ToGodot());
+                _mesh.SurfaceSetColor(c);
+                _mesh.SurfaceAddVertex(seg.B.ToGodot());
+            }
+            _mesh.SurfaceEnd();
+        }
+
+        /// <summary>2D distance from a point to a segment (viewport pixels).</summary>
+        private static float DistToSegment(Vector2 p, Vector2 a, Vector2 b)
+        {
+            var ab = b - a;
+            float len2 = ab.LengthSquared();
+            if (len2 < 1e-6f) return p.DistanceTo(a);
+            var pa = p - a;
+            float t = Mathf.Clamp((pa.X * ab.X + pa.Y * ab.Y) / len2, 0f, 1f);
+            return p.DistanceTo(a + ab * t);
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────
 
         private System.Numerics.Vector3 TargetPosSN()
@@ -305,12 +369,6 @@ namespace V12TwoDog
             if (_target == null) return System.Numerics.Vector3.Zero;
             var w = _target.WorldTransform;
             return new System.Numerics.Vector3(w.Translation.X, w.Translation.Y, w.Translation.Z);
-        }
-
-        private void SyncPosition()
-        {
-            if (_root == null || _target == null) return;
-            _root.Position = TargetPosSN().ToGodot();
         }
 
         /// <summary>
@@ -352,139 +410,31 @@ namespace V12TwoDog
             _root = new Node3D { Name = "EditorGizmo" };
             _root.Visible = false;
             viewport.AddChild(_root);
-            RebuildHandles();
-        }
 
-        private void RebuildHandles()
-        {
-            foreach (var h in _handles.Values)
-                if (GodotObject.IsInstanceValid(h)) h.QueueFree();
-            _handles.Clear();
-            if (_root == null) return;
-
-            switch (_mode)
+            // The gizmo stays world-anchored: segments are built in world
+            // space around the target, so the node never moves — only the
+            // mesh contents rebuild when the target or camera does.
+            _mesh = new ImmediateMesh();
+            _lines = new MeshInstance3D
             {
-                case GizmoMode.Translate: BuildTranslateHandles(); break;
-                case GizmoMode.Rotate:    BuildRotateHandles(); break;
-                case GizmoMode.Scale:     BuildScaleHandles(); break;
-            }
-        }
-
-        private void BuildTranslateHandles()
-        {
-            for (int axis = 0; axis < 3; axis++)
-            {
-                var mat = AxisMaterial(AxisColors[axis]);
-                var shaft = new MeshInstance3D
-                {
-                    Mesh = new CylinderMesh { TopRadius = 0.022f, BottomRadius = 0.022f, Height = 0.78f },
-                    MaterialOverride = mat
-                };
-                shaft.Position = AxisDirs[axis] * 0.39f;
-                shaft.RotationDegrees = AxisRotDegrees(axis);
-                _root!.AddChild(shaft);
-                _handles[axis] = shaft;
-
-                var head = new MeshInstance3D
-                {
-                    Mesh = new CylinderMesh { TopRadius = 0.05f, BottomRadius = 0.05f, Height = 0.22f },
-                    MaterialOverride = mat
-                };
-                head.Position = AxisDirs[axis] * 0.95f;
-                head.RotationDegrees = AxisRotDegrees(axis);
-                _root!.AddChild(head);
-                _handles[axis + 3] = head; // 3-5 = heads, axis = axis % 3
-            }
-            _root!.AddChild(PivotMesh(0.07f));
-        }
-
-        private void BuildScaleHandles()
-        {
-            for (int axis = 0; axis < 3; axis++)
-            {
-                var mat = AxisMaterial(AxisColors[axis]);
-                var shaft = new MeshInstance3D
-                {
-                    Mesh = new CylinderMesh { TopRadius = 0.02f, BottomRadius = 0.02f, Height = 0.6f },
-                    MaterialOverride = mat
-                };
-                shaft.Position = AxisDirs[axis] * 0.3f;
-                shaft.RotationDegrees = AxisRotDegrees(axis);
-                _root!.AddChild(shaft);
-                _handles[axis] = shaft;
-
-                var cube = new MeshInstance3D
-                {
-                    Mesh = new BoxMesh { Size = new Vector3(0.14f, 0.14f, 0.14f) },
-                    MaterialOverride = mat
-                };
-                cube.Position = AxisDirs[axis] * 0.75f;
-                _root!.AddChild(cube);
-                _handles[axis + 3] = cube; // 3-5 = end cubes, axis = axis % 3
-            }
-            // Centre cube = uniform scale (handle id 6).
-            var center = new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(0.11f, 0.11f, 0.11f) },
-                MaterialOverride = AxisMaterial(new Color(0.85f, 0.85f, 0.9f))
+                Mesh = _mesh,
+                MaterialOverride = LineMaterial(),
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             };
-            _root!.AddChild(center);
-            _handles[6] = center;
+            _root.AddChild(_lines);
+            _viewport = viewport;
         }
 
-        private void BuildRotateHandles()
+        /// <summary>Unshaded, vertex-coloured, never depth-tested — the
+        /// overlay always sits on top of the scene (MonoGame host parity).</summary>
+        private static StandardMaterial3D LineMaterial() => new()
         {
-            for (int axis = 0; axis < 3; axis++)
-            {
-                var mat = new StandardMaterial3D
-                {
-                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                    AlbedoColor = new Color(AxisColors[axis].R, AxisColors[axis].G, AxisColors[axis].B, 0.85f)
-                };
-                var ring = new MeshInstance3D
-                {
-                    Mesh = new TorusMesh { InnerRadius = 0.72f, OuterRadius = 0.8f },
-                    MaterialOverride = mat
-                };
-                ring.RotationDegrees = AxisRotDegrees(axis);
-                _root!.AddChild(ring);
-                _handles[axis] = ring;
-            }
-        }
-
-        private static MeshInstance3D PivotMesh(float size)
-        {
-            var mat = new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                AlbedoColor = new Color(0.85f, 0.85f, 0.9f, 0.9f)
-            };
-            return new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(size, size, size) },
-                MaterialOverride = mat
-            };
-        }
-
-        private static StandardMaterial3D AxisMaterial(Color color)
-        {
-            return new StandardMaterial3D
-            {
-                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-                AlbedoColor = color,
-                EmissionEnabled = true,
-                Emission = color
-            };
-        }
-
-        /// <summary>Rotation (degrees) mapping a +Y primitive to the axis.</summary>
-        private static Vector3 AxisRotDegrees(int axis) => axis switch
-        {
-            0 => new Vector3(0, 0, -90),   // +Y → +X
-            2 => new Vector3(90, 0, 0),    // +Y → +Z
-            _ => Vector3.Zero              // +Y stays +Y
+            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+            VertexColorUseAsAlbedo = true,
+            NoDepthTest = true,
+            DisableReceiveShadows = true,
+            AlbedoColor = Colors.White,
         };
 
         /// <summary>
