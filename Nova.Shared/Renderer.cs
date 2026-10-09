@@ -427,7 +427,30 @@ namespace V12TwoDog
 					}
 					else
 					{
-						rs.NodeType = SnapshotNodeType.RawElement;
+						// Any other IMeshRenderable (BoxMesh, CylinderMesh, …):
+						// flat triangle soup through the MeshCustom path —
+						// points carry the dimensions, the element's local
+						// transform (accumulated through the scene tree) places
+						// them.
+						rs.NodeType = SnapshotNodeType.MeshCustom;
+						rs.MeshPoints = mesh.MeshPoints;
+						rs.MeshIndices = mesh.Indices;
+					}
+
+					// Capture MaterialComponent from the owning element (drives
+					// ApplyMeshMaterial: flat colours, unlit, no-depth).
+					var meshOwner = (mesh as ComponentBase)?.Owner;
+					var matComp = meshOwner?.GetComponent<V12.Components.MaterialComponent>();
+					if (matComp != null)
+					{
+						rs.MatR = matComp.R;
+						rs.MatG = matComp.G;
+						rs.MatB = matComp.B;
+						rs.MatA = matComp.A;
+						rs.MatUnlit = matComp.Unlit;
+						rs.MatNoDepth = matComp.NoDepthTest;
+						rs.MatMetallic = matComp.Metallic;
+						rs.MatRoughness = matComp.Roughness;
 					}
 				}
 				else if (r is ICameraRenderable cam)
@@ -716,6 +739,7 @@ namespace V12TwoDog
 			if (!ReferenceEquals(a.MeshIndices, b.MeshIndices)) return false;
 
 			if (a.MatR != b.MatR || a.MatG != b.MatG || a.MatB != b.MatB || a.MatA != b.MatA) return false;
+			if (a.MatUnlit != b.MatUnlit || a.MatNoDepth != b.MatNoDepth) return false;
 			if (a.MatMetallic != b.MatMetallic || a.MatRoughness != b.MatRoughness) return false;
 			if (a.MatTexturePath != b.MatTexturePath) return false;
 			if (a.MatUvOffsetX != b.MatUvOffsetX || a.MatUvOffsetY != b.MatUvOffsetY) return false;
@@ -973,6 +997,7 @@ namespace V12TwoDog
             // Skip if no material data (RenderableSnapshot struct defaults all floats to 0)
             if (rs.MatA == 0f && rs.MatR == 0f && rs.MatG == 0f && rs.MatB == 0f
                 && rs.MatMetallic == 0f && rs.MatRoughness == 0f
+                && !rs.MatUnlit && !rs.MatNoDepth
                 && string.IsNullOrEmpty(rs.MatTexturePath))
                 return;
 
@@ -986,6 +1011,10 @@ namespace V12TwoDog
             mat.AlbedoColor = new Color(rs.MatR, rs.MatG, rs.MatB, rs.MatA);
             mat.Metallic = rs.MatMetallic;
             mat.Roughness = rs.MatRoughness;
+            if (rs.MatUnlit)
+                mat.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
+            if (rs.MatNoDepth)
+                mat.NoDepthTest = true;
 
             if (!string.IsNullOrEmpty(rs.MatTexturePath))
             {
