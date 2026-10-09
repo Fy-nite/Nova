@@ -31,6 +31,7 @@ namespace V12TwoDog
         private readonly Renderer _renderer;
         private readonly GizmoEntitySync _sync = new();
         private SubViewport? _viewport;
+        private readonly List<long> _drivenPartIds = new();
 
         private IWorldElement? _target;
         private GizmoMode _mode = GizmoMode.Translate;
@@ -88,17 +89,19 @@ namespace V12TwoDog
         }
 
         /// <summary>Per-frame upkeep: sync the transient entities so the
-        /// gizmo follows the target (also mid-drag) at constant screen size.</summary>
+        /// gizmo follows the target (also mid-drag) at constant screen size,
+        /// and direct-drive the part nodes so they never trail behind.</summary>
         public void Update()
         {
             if (_target == null)
             {
                 _sync.Destroy();
+                UnpinAllParts();
                 return;
             }
             var cam = _viewport?.GetCamera3D();
             if (cam == null) return;
-            SyncGizmo(cam);
+            DriveParts(cam);
         }
 
         /// <summary>Try to grab a gizmo handle at <paramref name="pos"/>.
@@ -188,6 +191,10 @@ namespace V12TwoDog
             // Render the change straight onto the target's node — the world owns
             // truth (LocalTransform), but the snapshot pipeline would batch it.
             SyncTargetNode();
+            // Parts follow in the same frame: re-sync to the moved target and
+            // direct-drive their nodes (no snapshot glide at any drag speed).
+            if (_dragCamera != null)
+                DriveParts(_dragCamera);
         }
 
         /// <summary>End any active drag.</summary>
@@ -201,8 +208,51 @@ namespace V12TwoDog
             _dragHandle = -1;
             _dragCamera = null;
             _sync.Destroy();
+            UnpinAllParts();
             _viewport = null;
             _target = null;
+        }
+
+        /// <summary>Pin live parts to direct driving and write their node
+        /// transforms straight from the specs: parts follow the target in the
+        /// same frame with no snapshot glide, at any drag speed. Unpins parts
+        /// that no longer exist (rebuild/destroy).</summary>
+        private void DriveParts(Camera3D cam)
+        {
+            if (_target == null) return;
+            SyncGizmo(cam);
+            var drives = _sync.PartDrives;
+            for (int i = _drivenPartIds.Count - 1; i >= 0; i--)
+            {
+                bool live = false;
+                foreach (var d in drives)
+                    if (d.ElementId == _drivenPartIds[i]) { live = true; break; }
+                if (!live)
+                {
+                    _renderer.SetEditorDriven(_drivenPartIds[i], false);
+                    _drivenPartIds.RemoveAt(i);
+                }
+            }
+            foreach (var d in drives)
+            {
+                if (!_drivenPartIds.Contains(d.ElementId))
+                {
+                    _renderer.SetEditorDriven(d.ElementId, true);
+                    _drivenPartIds.Add(d.ElementId);
+                }
+                var node = _renderer.GetNode(d.ElementId);
+                if (node == null) continue;
+                var basis = new Basis(new global::Godot.Quaternion(
+                    d.Rotation.X, d.Rotation.Y, d.Rotation.Z, d.Rotation.W));
+                node.Transform = new Transform3D(basis, new Vector3(d.Center.X, d.Center.Y, d.Center.Z));
+            }
+        }
+
+        private void UnpinAllParts()
+        {
+            foreach (var id in _drivenPartIds)
+                _renderer.SetEditorDriven(id, false);
+            _drivenPartIds.Clear();
         }
 
         // ── Transient entities ──────────────────────────────────────────
