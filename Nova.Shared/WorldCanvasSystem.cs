@@ -373,10 +373,11 @@ namespace V12TwoDog
 
         private void HandleViewportPress(WidgetNode wn, Vector2 pos)
         {
-            // Grab an axis arrow first — a gizmo drag consumes the press.
+            // Grab a gizmo handle first — a gizmo drag consumes the press.
             if (_gizmo.HandleMouseDown(pos, wn.ScreenViewport)) return;
 
-            long id = _renderer.PickElement(wn.ElementId, pos);
+            // Gizmo parts are grabbable, never selectable: clicks pass through.
+            long id = _renderer.PickElement(wn.ElementId, pos, _gizmo.IsGizmoPart);
             if (id != 0)
             {
                 var el = _gameRoot?.FindElement(e => e.Id == id);
@@ -660,6 +661,8 @@ namespace V12TwoDog
         private static void TreeSig(System.Text.StringBuilder sb, IWorldElement el)
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
+            // Editor-transient subtrees (gizmo handles) never appear.
+            if (V12.Components.EditorTransientComponent.IsTransient(el)) return;
             sb.Append(el.Id).Append('|').Append(TreeRowText(el)).Append('|')
               .Append(el.GetComponent<UIStyleComponent>()?.StyleHint ?? "").Append(';');
             foreach (var child in el.Children)
@@ -669,6 +672,8 @@ namespace V12TwoDog
         private void BuildTreeItem(WidgetNode wn, Tree tree, IWorldElement el, TreeItem? parent)
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
+            // Editor-transient subtrees (gizmo handles) never appear.
+            if (V12.Components.EditorTransientComponent.IsTransient(el)) return;
             var item = parent != null ? tree.CreateItem(parent) : tree.CreateItem();
             wn.TreeItems[el.Id] = item;
             wn.TreeElements[el.Id] = el;

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Godot;
 using V12.Core;
 using V12.Core.Core.Interfaces;
@@ -14,30 +13,24 @@ namespace V12TwoDog
     /// scale — axis shafts with tip cubes plus a centre cube for uniform
     /// scale.
     ///
-    /// The geometry is NOT built here: both this host and the MonoGame host
-    /// draw the one canonical model in <see cref="TransformGizmo"/> (V12
-    /// core), so every renderer shows and grabs the same gizmo. This class
-    /// only projects those segments into the Godot viewport (one
-    /// <see cref="ImmediateMesh"/> of world-space lines), screen-space grabs,
-    /// and drives the drag.
+    /// The visuals are transient V12 elements driven by the shared
+    /// <see cref="GizmoEntitySync"/> (same spawner the MonoGame host uses),
+    /// so both hosts render identical meshes through the normal pipeline —
+    /// no host-side geometry here. Grabs use V12's analytic pick shapes
+    /// (<see cref="TransformGizmo.TryHitHandles"/>); this class only builds
+    /// the camera ray and drives the drag.
     ///
     /// The V12 world owns the truth: the gizmo writes back into the element's
     /// LocalTransform. While dragging, the target is pinned editor-driven and
     /// its render node is written directly so TRS input renders immediately
     /// instead of being batched through the 60Hz worker snapshot + interp
     /// pipeline.
-    /// The gizmo's Godot nodes live directly under the viewport (outside the
-    /// renderer's element-node map), so snapshot reconciliation never disturbs
-    /// them.
     /// </summary>
     public sealed class SceneGizmo
     {
         private readonly Renderer _renderer;
-        private Node3D? _root;
-        private MeshInstance3D? _lines;
-        private ImmediateMesh? _mesh;
+        private readonly GizmoEntitySync _sync = new();
         private SubViewport? _viewport;
-        private readonly List<TransformGizmo.Segment> _scratch = new();
 
         private IWorldElement? _target;
         private GizmoMode _mode = GizmoMode.Translate;
@@ -66,6 +59,11 @@ namespace V12TwoDog
         public bool HasTarget => _target != null;
         public bool IsDragging => _dragHandle >= 0;
 
+        /// <summary>True when the element id belongs to a live gizmo part
+        /// (world picking must skip those: handles are grabbable, never
+        /// selectable).</summary>
+        public bool IsGizmoPart(long elementId) => _sync.IsGizmoPart(elementId);
+
         /// <summary>Show the gizmo around <paramref name="el"/> inside
         /// <paramref name="viewport"/>. Pass null to hide.</summary>
         public void SetTarget(IWorldElement? el, SubViewport viewport)
@@ -76,63 +74,53 @@ namespace V12TwoDog
                 _renderer.SetEditorDriven(_target.Id, false);
             _dragHandle = -1;
             _target = el;
+            _viewport = viewport;
             if (el == null)
-            {
-                if (_root != null) _root.Visible = false;
-                return;
-            }
-            EnsureBuilt(viewport);
-            if (_root != null) _root.Visible = true;
-            RebuildLines();
+                _sync.Destroy();
         }
 
-        /// <summary>Switch gizmo mode and rebuild the lines for it.</summary>
+        /// <summary>Switch gizmo mode (the spawner rebuilds lazily).</summary>
         public void SetMode(GizmoMode mode)
         {
             if (_mode == mode) return;
             _mode = mode;
             CancelDrag();
-            if (_root != null && _target != null && _root.Visible)
-                RebuildLines();
         }
 
-        /// <summary>Per-frame upkeep: rebuild the lines so the gizmo follows
-        /// the target (also mid-drag — the camera is fixed during drags, the
-        /// pivot moves).</summary>
+        /// <summary>Per-frame upkeep: sync the transient entities so the
+        /// gizmo follows the target (also mid-drag) at constant screen size.</summary>
         public void Update()
         {
-            if (_target == null || _root == null || !_root.Visible) return;
-            RebuildLines();
+            if (_target == null)
+            {
+                _sync.Destroy();
+                return;
+            }
+            var cam = _viewport?.GetCamera3D();
+            if (cam == null) return;
+            SyncGizmo(cam);
         }
 
         /// <summary>Try to grab a gizmo handle at <paramref name="pos"/>.
         /// Returns true when a drag starts (caller should skip world picking).</summary>
         public bool HandleMouseDown(Vector2 pos, SubViewport viewport)
         {
-            if (_target == null || _root == null || !_root.Visible) return false;
+            if (_target == null) return false;
             var cam = viewport.GetCamera3D();
             if (cam == null) return false;
             _viewport = viewport;
 
-            // Screen-space test against the model's own segments — exactly
-            // what the overlay draws is exactly what the hand grabs.
-            BuildSegments(cam);
-            int hit = -1;
-            float best = TransformGizmo.GrabThresholdPx;
-            foreach (var seg in _scratch)
-            {
-                var a = seg.A.ToGodot();
-                var b = seg.B.ToGodot();
-                if (cam.IsPositionBehind(a) || cam.IsPositionBehind(b)) continue;
-                float d = DistToSegment(pos, cam.UnprojectPosition(a), cam.UnprojectPosition(b));
-                if (d >= best) continue;
-                best = d;
-                hit = seg.Handle;
-            }
-            if (hit < 0) return false;
-
+            // Analytic test against the canonical fat pick shapes — the
+            // visual meshes are never raycast.
+            SyncGizmo(cam);
             var origin = cam.ProjectRayOrigin(pos);
             var dir = cam.ProjectRayNormal(pos);
+            var ro = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z);
+            var rd = new System.Numerics.Vector3(dir.X, dir.Y, dir.Z);
+            if (rd.LengthSquared() < 1e-12f) return false;
+            rd = System.Numerics.Vector3.Normalize(rd);
+            if (!TransformGizmo.TryHitHandles(ro, rd, _sync.Specs, out int hit, out _))
+                return false;
 
             // Pin the target to direct main-thread driving for the drag: the
             // 60Hz worker snapshot + interpolation pipeline otherwise lags fast
@@ -205,18 +193,30 @@ namespace V12TwoDog
         /// <summary>End any active drag.</summary>
         public void HandleMouseUp() => CancelDrag();
 
-        /// <summary>Release all Godot nodes.</summary>
+        /// <summary>Release the transient entities.</summary>
         public void Free()
         {
             if (_dragHandle >= 0 && _target != null)
                 _renderer.SetEditorDriven(_target.Id, false);
-            if (_root != null && GodotObject.IsInstanceValid(_root))
-                _root.QueueFree();
-            _root = null;
-            _lines = null;
-            _mesh = null;
+            _dragHandle = -1;
+            _dragCamera = null;
+            _sync.Destroy();
             _viewport = null;
             _target = null;
+        }
+
+        // ── Transient entities ──────────────────────────────────────────
+
+        /// <summary>Sync the shared spawner for this camera: constant screen
+        /// size at the target's distance.</summary>
+        private void SyncGizmo(Camera3D cam)
+        {
+            if (_target == null) return;
+            var origin = TargetPosSN();
+            float dist = cam.GlobalPosition.DistanceTo(origin.ToGodot());
+            float size = TransformGizmo.ScreenSizeFromFov(dist, cam.Fov);
+            var world = GameRoot.Instance?.GetWorldForElement(_target);
+            _sync.Sync(world, _target, _mode, origin, size);
         }
 
         // ── Drag modes ────────────────────────────────────────────────────
@@ -308,60 +308,6 @@ namespace V12TwoDog
             };
         }
 
-        // ── Model projection ──────────────────────────────────────────────
-
-        /// <summary>Fill <see cref="_scratch"/> with the canonical gizmo
-        /// segments around the target, sized for this camera.</summary>
-        private void BuildSegments(Camera3D cam)
-        {
-            if (_target == null) { _scratch.Clear(); return; }
-            var origin = TargetPosSN();
-            float dist = cam.GlobalPosition.DistanceTo(origin.ToGodot());
-            float size = TransformGizmo.ScreenSizeFromFov(dist, cam.Fov);
-            var look = -cam.GlobalTransform.Basis.Z;
-            TransformGizmo.Build(_mode, origin, size,
-                new System.Numerics.Vector3(look.X, look.Y, look.Z), _scratch);
-        }
-
-        /// <summary>Rebuild the line mesh from the model — world-space
-        /// segments, one immediate-mode surface, rebuilt whenever the target,
-        /// mode or camera distance changes (cheap: a few dozen lines).</summary>
-        private void RebuildLines()
-        {
-            if (_mesh == null || _target == null) return;
-            var cam = _viewport?.GetCamera3D();
-            if (cam == null) return;
-            BuildSegments(cam);
-
-            _mesh.ClearSurfaces();
-            if (_scratch.Count == 0) return;
-            _mesh.SurfaceBegin(Mesh.PrimitiveType.Lines);
-            foreach (var seg in _scratch)
-            {
-                var c = new Color(
-                    seg.Color.R / 255f,
-                    seg.Color.G / 255f,
-                    seg.Color.B / 255f,
-                    seg.Color.A / 255f);
-                _mesh.SurfaceSetColor(c);
-                _mesh.SurfaceAddVertex(seg.A.ToGodot());
-                _mesh.SurfaceSetColor(c);
-                _mesh.SurfaceAddVertex(seg.B.ToGodot());
-            }
-            _mesh.SurfaceEnd();
-        }
-
-        /// <summary>2D distance from a point to a segment (viewport pixels).</summary>
-        private static float DistToSegment(Vector2 p, Vector2 a, Vector2 b)
-        {
-            var ab = b - a;
-            float len2 = ab.LengthSquared();
-            if (len2 < 1e-6f) return p.DistanceTo(a);
-            var pa = p - a;
-            float t = Mathf.Clamp((pa.X * ab.X + pa.Y * ab.Y) / len2, 0f, 1f);
-            return p.DistanceTo(a + ab * t);
-        }
-
         // ── Helpers ───────────────────────────────────────────────────────
 
         private System.Numerics.Vector3 TargetPosSN()
@@ -397,45 +343,6 @@ namespace V12TwoDog
             _dragHandle = -1;
             _dragCamera = null;
         }
-
-        private void EnsureBuilt(SubViewport viewport)
-        {
-            if (_root != null && GodotObject.IsInstanceValid(_root) && _root.GetParent() == viewport)
-                return;
-            if (_root != null && GodotObject.IsInstanceValid(_root) && _root.GetParent() != null)
-                _root.GetParent().RemoveChild(_root);
-            if (_root != null && !GodotObject.IsInstanceValid(_root))
-                _root = null;
-
-            _root = new Node3D { Name = "EditorGizmo" };
-            _root.Visible = false;
-            viewport.AddChild(_root);
-
-            // The gizmo stays world-anchored: segments are built in world
-            // space around the target, so the node never moves — only the
-            // mesh contents rebuild when the target or camera does.
-            _mesh = new ImmediateMesh();
-            _lines = new MeshInstance3D
-            {
-                Mesh = _mesh,
-                MaterialOverride = LineMaterial(),
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            };
-            _root.AddChild(_lines);
-            _viewport = viewport;
-        }
-
-        /// <summary>Unshaded, vertex-coloured, never depth-tested — the
-        /// overlay always sits on top of the scene (MonoGame host parity).</summary>
-        private static StandardMaterial3D LineMaterial() => new()
-        {
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            VertexColorUseAsAlbedo = true,
-            NoDepthTest = true,
-            DisableReceiveShadows = true,
-            AlbedoColor = Colors.White,
-        };
 
         /// <summary>
         /// Intersect the ray with the view plane (perpendicular to the camera's

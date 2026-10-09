@@ -98,9 +98,12 @@ namespace V12TwoDog
 		/// <paramref name="screenPos"/> (viewport-local pixels, top-left origin)
 		/// against every rendered mesh in that viewport. Returns the element id
 		/// of the closest hit, or 0 when nothing is hit. Uses manual triangle
-		/// intersection so no physics bodies are needed.
+		/// intersection so no physics bodies are needed. Elements rejected by
+		/// <paramref name="isExcluded"/> (e.g. transient gizmo parts, which are
+		/// grabbable but never selectable) are skipped in the loop so clicks
+		/// pass through to whatever is behind them.
 		/// </summary>
-		public long PickElement(long viewportId, Vector2 screenPos)
+		public long PickElement(long viewportId, Vector2 screenPos, Func<long, bool>? isExcluded = null)
 		{
 			if (!_sceneViewports.TryGetValue(viewportId, out var vp) || !GodotObject.IsInstanceValid(vp)) return 0;
 			var cam = vp.GetCamera3D();
@@ -112,6 +115,7 @@ namespace V12TwoDog
 			float bestT = float.MaxValue;
 			foreach (var kvp in _nodesByElementId)
 			{
+				if (isExcluded != null && isExcluded(kvp.Key)) continue;
 				if (!GodotObject.IsInstanceValid(kvp.Value) || kvp.Value is not MeshInstance3D mi) continue;
 				if (mi.Mesh == null) continue;
 				if (ViewportIdOfNode(mi) != viewportId) continue;
