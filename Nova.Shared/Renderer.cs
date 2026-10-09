@@ -428,10 +428,10 @@ namespace V12TwoDog
 					else
 					{
 						// Any other IMeshRenderable (BoxMesh, CylinderMesh, …):
-						// flat triangle soup through the MeshCustom path —
-						// points carry the dimensions, the element's local
-						// transform (accumulated through the scene tree) places
-						// them.
+						// flat triangle soup through the MeshCustom path.
+						// Meshes carry no transforms — points are absolute and
+						// the element's local transform (accumulated through
+						// the Godot tree) places them.
 						rs.NodeType = SnapshotNodeType.MeshCustom;
 						rs.MeshPoints = mesh.MeshPoints;
 						rs.MeshIndices = mesh.Indices;
