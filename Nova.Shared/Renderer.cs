@@ -357,19 +357,9 @@ namespace V12TwoDog
 						ancestor = ancestor.Parent;
 					}
 
-					// Use local transform (hierarchy accumulates through scene tree)
-					var localTc = owner.GetComponent<TransformComponent>();
-					if (localTc != null)
-					{
-						rs.Transform = localTc.Transform;
-					}
-					else
-					{
-						var lt = owner.LocalTransform;
-						rs.Transform = System.Numerics.Matrix4x4.CreateScale(lt.Scale)
-							* System.Numerics.Matrix4x4.CreateFromQuaternion(lt.Rotation)
-							* System.Numerics.Matrix4x4.CreateTranslation(lt.Position);
-					}
+					// Use local transform (hierarchy accumulates through scene tree):
+					// single definition in ElementPlacement (folds ScaleComponent).
+					rs.Transform = V12.Core.ElementPlacement.ElementLocalMatrix(owner);
 					rs.LocalTransform = rs.Transform;
 					rs.HasLocalTransform = true;
 					rs.IsWorldLocked = false;
