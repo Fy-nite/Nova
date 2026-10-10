@@ -105,6 +105,7 @@ namespace V12TwoDog
         private DebugGameService? _debug;
         private LaserVisual? _laserVisual;
         private WorldCanvasSystem? _worldCanvas;
+        private DefaultEnvironment? _defaultEnv;
         private GamepakLauncher? _launcher;
         private PickupSystem? _pickup;
 
@@ -169,6 +170,11 @@ namespace V12TwoDog
 
             _physics = new GodotPhysicsBackend(host);
             Root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _physics);
+
+            // Baked-in scene environment (sky/ambient + default sun until the
+            // game provides its own lights). Worlds load below; AfterGamepakStart
+            // applies the first real evaluation.
+            _defaultEnv = new DefaultEnvironment(host);
 
             // ── Discover game paks ──
             Root.LoadGamepacks(_options.GamepakDirectory);
@@ -258,7 +264,7 @@ namespace V12TwoDog
             InputHandler = new InputHandler();
             var worldSyncHandler = new WorldSyncHandler(Root);
             RemotePlayerManager = new RemotePlayerManager(Root);
-            NetworkHandler = new NetworkHandler(Root, worldSyncHandler, RemotePlayerManager);
+            NetworkHandler = new NovaNetworkHandler(Root, worldSyncHandler, RemotePlayerManager);
             _laserVisual = new LaserVisual();
 
             // ── Multiplayer ──
@@ -487,6 +493,9 @@ namespace V12TwoDog
 
             // ── World/screen-space UI (CanvasComponent) ──
             _worldCanvas?.Update(Root);
+
+            // ── Default environment (sky/ambient/sun until the game defines them) ──
+            _defaultEnv?.Update(Root);
         }
 
         /// <summary>
@@ -508,6 +517,10 @@ namespace V12TwoDog
 
             _pickup = Root.Registry.Get<PickupSystem>();
             _pickup?.Initialize(Root);
+
+            // Worlds exist now — evaluate the default environment once up front
+            // (the ~2 Hz poll in ProcessPhysics keeps it correct after that).
+            _defaultEnv?.Ensure(Root);
 
             if (RemotePlayerManager != null)
                 RemotePlayerManager.LocalWorldName = Root.SelectedWorld?.WorldName ?? "";
