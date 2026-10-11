@@ -10,8 +10,8 @@
            creates two projects with the identity V12/1.0.0, which makes the
            SDK drop V12 from the generated deps.json entirely — and Godot's
            PluginLoadContext then cannot resolve V12.dll at runtime. -->
-      <ProjectReference Include="../libs/V12.Basic/libs/V12/V12.csproj" />
-    <ProjectReference Include="../libs/V12.Basic/V12.Basic.csproj" />
+      <ProjectReference Include="../../../libs/V12.Basic/libs/V12/V12.csproj" />
+    <ProjectReference Include="../../../libs/V12.Basic/V12.Basic.csproj" />
     <ProjectReference Include="..\Nova.SDK\Nova.SDK.csproj" />
     <ProjectReference Include="..\Nova.Shared\Nova.Shared.csproj" />
     <!-- Direct-reference the Sample Game so it ships with this game assembly

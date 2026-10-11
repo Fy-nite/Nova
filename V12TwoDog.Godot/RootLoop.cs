@@ -1,5 +1,7 @@
 using Godot;
 using System;
+using System.Collections.Generic;
+using V12;
 
 /// <summary>
 /// Thin scene adapter bound to <c>res://RootLoop.cs</c> by <c>main.tscn</c>.
@@ -22,6 +24,11 @@ public partial class RootLoop : Node3D
 
     public override void _Ready()
     {
+        // A game pak registered by the embedding host (V12Host.RegisterGamePak)
+        // wins over discovery: run it directly so it isn't also auto-discovered
+        // from the host's referenced assemblies (which would double-load it).
+        var explicitPaks = V12TwoDog.GamepakHandoff.Pending;
+
         var options = new V12TwoDog.V12RuntimeOptions
         {
             // Prefer gamepaks shipped by the embedding app itself. A consumer
@@ -29,10 +36,8 @@ public partial class RootLoop : Node3D
             // NOT load the bundled Sample Game from libs/nova/V12.SampleGame —
             // its entry assembly is used instead. Bare hosts (editor Play, plain
             // 2dog hosts) fall back to the Sample Game so they still get a scene.
-            GamepakAssemblies = DiscoverHostGamepaks(), //?? new[]
-            // {
-            //     typeof(V12.SampleGame.SampleGamePack).Assembly
-            // },
+            GamepakAssemblies = explicitPaks.Count > 0 ? null : DiscoverHostGamepaks(),
+            Gamepaks = explicitPaks.Count > 0 ? new List<IV12Gamepack>(explicitPaks) : null,
             ShowLauncher = false,
             CreateEmptyWorldIfNoPak = false,
         };

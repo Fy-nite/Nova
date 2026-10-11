@@ -57,6 +57,13 @@ namespace V12TwoDog
         /// <summary>Name of a gamepak to launch immediately (equivalent of --gamepak=&lt;name&gt;).</summary>
         public string? ForceGamepak { get; set; }
 
+        /// <summary>
+        /// Game pak instances registered explicitly by an embedding host
+        /// (e.g. <c>V12Host.RegisterGamePak</c>). When present they are started
+        /// instead of any pak discovered from <see cref="GamepakAssemblies"/>.
+        /// </summary>
+        public IReadOnlyList<IV12Gamepack>? Gamepaks { get; set; }
+
         /// <summary>When paks exist but none is forced, show the launcher (else pick none).</summary>
         public bool ShowLauncher { get; set; } = true;
 
@@ -210,6 +217,19 @@ namespace V12TwoDog
                         GD.PrintErr($"[V12Runtime] Failed to load gamepaks from '{asm.GetName().Name}': {ex.Message}");
                     }
                 }
+            }
+
+            // ── Explicitly registered game paks (host handed them to us) ──
+            if (_options.Gamepaks is { Count: > 0 })
+            {
+                foreach (var pak in _options.Gamepaks)
+                {
+                    Root.Gamepaks.Add(pak);
+                    pak.Initialize();
+                    pak.OnStart();
+                    GD.Print($"[V12Runtime] Explicit gamepak '{pak.Name}' started.");
+                }
+                assemblyPakStarted = true;
             }
 
             // ── Pick a gamepak: direct assembly, forced, or launcher, or none ──
@@ -524,6 +544,32 @@ namespace V12TwoDog
 
             if (RemotePlayerManager != null)
                 RemotePlayerManager.LocalWorldName = Root.SelectedWorld?.WorldName ?? "";
+        }
+
+        /// <summary>
+        /// Register and start an additional game pak on this runtime. Safe to call
+        /// after the runtime is running (unlike the options-based path). No-op when a
+        /// pak with the same name is already loaded.
+        /// </summary>
+        public void RegisterGamePak(IV12Gamepack pak)
+        {
+            if (pak == null) return;
+
+            foreach (var existing in Root.Gamepaks.Gamepaks)
+            {
+                if (string.Equals(existing.Name, pak.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    GD.Print($"[V12Runtime] Gamepak '{pak.Name}' already loaded — skipping.");
+                    return;
+                }
+            }
+
+            Root.Gamepaks.Add(pak);
+            pak.Initialize();
+            pak.OnStart();
+            GamepakMode = true;
+            AfterGamepakStart();
+            GD.Print($"[V12Runtime] Registered gamepak '{pak.Name}' after start.");
         }
 
         /// <summary>Stop the worker thread and release XR resources.</summary>

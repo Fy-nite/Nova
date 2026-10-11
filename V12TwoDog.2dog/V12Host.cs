@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using V12;
 using Engine = twodog.Engine;
 
@@ -42,6 +43,7 @@ namespace V12TwoDog
     {
         private Engine? _engine;
         private GodotInstance? _godot;
+        private readonly List<IV12Gamepack> _pendingGamepaks = new();
 
         /// <summary>The live scene tree after <see cref="Start"/>.</summary>
         public SceneTree? Tree => _engine?.Tree;
@@ -66,6 +68,13 @@ namespace V12TwoDog
 
             _engine = new Engine("V12TwoDog", projectDir ?? Engine.ResolveContent(), args);
             _godot = _engine.Start(); // runs run/main_scene (main.tscn → RootLoop → V12Runtime)
+
+            // The scene is up and RootLoop has built the runtime — hand over any
+            // paks registered before Start() (RootLoop already consumed them via
+            // GamepakHandoff, so the runtime de-dupes by name).
+            if (ResolveRuntime() is { } runtime)
+                foreach (var pak in _pendingGamepaks)
+                    runtime.RegisterGamePak(pak);
         }
 
         /// <summary>
@@ -95,10 +104,25 @@ namespace V12TwoDog
             _engine = null;
         }
 
+        /// <summary>
+        /// Hand a game pak to the embedded runtime. Safe before or after
+        /// <see cref="Start"/>: before, RootLoop picks it up when it builds the
+        /// runtime; after, it is registered on the live runtime.
+        /// </summary>
         public void RegisterGamePak(IV12Gamepack pak)
         {
-            //TODO: do this in V12Runtime instead of here, so we can register gamepacks after Start() too
+            if (pak == null) return;
+
+            if (!_pendingGamepaks.Contains(pak))
+                _pendingGamepaks.Add(pak);
+
+            GamepakHandoff.Register(pak);
+            ResolveRuntime()?.RegisterGamePak(pak);
         }
+
+        /// <summary>The live runtime, or null before the scene main loop is up.</summary>
+        private V12Runtime? ResolveRuntime()
+            => Tree?.CurrentScene as RootLoop is { } loop ? loop.Runtime : null;
 
     }
 }
