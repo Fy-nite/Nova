@@ -15,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\libs\V12.Basic\V12.Basic.csproj" />
-    <ProjectReference Include="..\..\..\libs\V12.Basic\libs\V12.Bindings\V12.Bindings.csproj" />
+    <ProjectReference Include="$(V12BasicProject)" />
+    <ProjectReference Include="$(V12BindingsProject)" />
   </ItemGroup>
 
 </Project>

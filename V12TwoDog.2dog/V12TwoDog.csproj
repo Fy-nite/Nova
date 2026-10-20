@@ -22,7 +22,7 @@
            creates two projects with the identity V12/1.0.0, which makes the
            SDK drop V12 from the generated deps.json entirely — and Godot's
            PluginLoadContext then cannot resolve V12.dll at runtime. -->
-      <ProjectReference Include="..\..\..\libs\V12.Basic\V12.Basic.csproj" />
+      <ProjectReference Include="$(V12BasicProject)" />
       <ProjectReference Include="..\Nova.SDK\Nova.SDK.csproj" />
       <ProjectReference Include="..\Nova.Shared\Nova.Shared.csproj" />
       <ProjectReference Include="..\V12TwoDog.Godot\V12TwoDog.Godot.csproj" />
