@@ -12,6 +12,7 @@ namespace V12TwoDog
 		public class Renderer : IRenderer
 	    {
 		private readonly List<IRenderable> _renderables = new List<IRenderable>();
+		public event Action? PickDataInvalidated;
 		public SceneTree root;
 		private Dictionary<long, Node3D> _nodesByElementId = new();
 		private Dictionary<string, StandardMaterial3D> _materialCache = new();
@@ -70,13 +71,18 @@ namespace V12TwoDog
 		/// ViewportId should render into.</summary>
 		public void RegisterSceneViewport(long viewportId, SubViewport viewport)
 		{
-			_sceneViewports[viewportId] = viewport;
+			if (!_sceneViewports.TryGetValue(viewportId, out var current) || current != viewport)
+			{
+				_sceneViewports[viewportId] = viewport;
+				PickDataInvalidated?.Invoke();
+			}
 		}
 
 		/// <summary>Remove a SubViewport registration (its widget was destroyed).</summary>
 		public void UnregisterSceneViewport(long viewportId)
 		{
-			_sceneViewports.Remove(viewportId);
+			if (_sceneViewports.Remove(viewportId))
+				PickDataInvalidated?.Invoke();
 		}
 
 		/// <summary>Get the registered SubViewport for a viewport element id, if any.</summary>
@@ -84,6 +90,11 @@ namespace V12TwoDog
 		{
 			return _sceneViewports.TryGetValue(viewportId, out var vp) ? vp : null;
 		}
+
+		/// <summary>Registered scene viewport ids with their SubViewports.
+		/// Editor tooling (viewport hit-testing) iterates this to find the
+		/// viewport under a screen point.</summary>
+		public IReadOnlyDictionary<long, SubViewport> SceneViewports => _sceneViewports;
 
 		/// <summary>Id of the viewport an element last rendered in (0 = main screen).</summary>
 		public long GetElementViewportId(long elementId)
@@ -285,12 +296,16 @@ namespace V12TwoDog
 		public void QueueItem(IRenderable item)
 		{
 			if (!_renderables.Contains(item))
+			{
 				_renderables.Add(item);
+				PickDataInvalidated?.Invoke();
+			}
 		}
 
 		public void RemoveItem(IRenderable item)
 		{
-			_renderables.Remove(item);
+			if (_renderables.Remove(item))
+				PickDataInvalidated?.Invoke();
 		}
 
 		public int GetScreenWidth() => (int)DisplayServer.WindowGetSize().X;
@@ -454,6 +469,8 @@ namespace V12TwoDog
 					rs.NearClip = cam.NearClip;
 					rs.FarClip = cam.FarClip;
 					rs.IsCurrentCamera = cam.IsCurrent;
+					rs.Projection = cam.Projection;
+					rs.OrthoSize = cam.OrthoSize;
 				}
 				else if (r is ISpriteRenderable sprite)
 				{
@@ -491,6 +508,7 @@ namespace V12TwoDog
 		{
 			if (snapshot == null) return;
 
+			bool pickDataChanged = false;
 			var currentIds = new HashSet<long>();
 			_currentCamerasByViewport.Clear();
 
@@ -498,9 +516,13 @@ namespace V12TwoDog
 			foreach (var rs in snapshot.Renderables)
 			{
 				currentIds.Add(rs.ElementId);
+				if (_appliedSnapshots.TryGetValue(rs.ElementId, out var priorSnapshot)
+					&& PickDataChanged(priorSnapshot, rs))
+					pickDataChanged = true;
 
 				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node) || !GodotObject.IsInstanceValid(node))
 				{
+					pickDataChanged = true;
 					node = CreateNode(rs);
 					if (node == null) continue;
 
@@ -706,7 +728,19 @@ namespace V12TwoDog
 				if (!_currentCamerasByViewport.Contains(vp))
 					cam.Current = false;
 			}
+
+			if (toRemove.Count > 0) pickDataChanged = true;
+			if (pickDataChanged) PickDataInvalidated?.Invoke();
 		}
+
+		private static bool PickDataChanged(RenderableSnapshot before, RenderableSnapshot after)
+			=> before.ViewportId != after.ViewportId
+				|| before.NodeType != after.NodeType
+				|| before.MeshWidth != after.MeshWidth
+				|| before.MeshHeight != after.MeshHeight
+				|| before.MeshDepth != after.MeshDepth
+				|| !ReferenceEquals(before.MeshPoints, after.MeshPoints)
+				|| !ReferenceEquals(before.MeshIndices, after.MeshIndices);
 
 		/// <summary>
 		/// True when two snapshots for the same element describe identical render
@@ -750,6 +784,8 @@ namespace V12TwoDog
 
 			if (a.Fov != b.Fov || a.NearClip != b.NearClip || a.FarClip != b.FarClip) return false;
 			if (a.IsCurrentCamera != b.IsCurrentCamera) return false;
+			if (a.Projection != b.Projection) return false;
+			if (a.OrthoSize != b.OrthoSize) return false;
 
 			return true;
 		}
@@ -970,6 +1006,11 @@ namespace V12TwoDog
 						camera3D.Near = rs.NearClip;
 						camera3D.Far = rs.FarClip;
 						camera3D.Current = rs.IsCurrentCamera;
+						camera3D.Projection = rs.Projection == CameraProjection.Perspective
+							? Camera3D.ProjectionType.Perspective
+							: Camera3D.ProjectionType.Orthogonal;
+						if (camera3D.Projection == Camera3D.ProjectionType.Orthogonal)
+							camera3D.Size = rs.OrthoSize;
 					}
 					break;
 				}

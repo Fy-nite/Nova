@@ -7,11 +7,22 @@ namespace V12TwoDog.Godot.UI
 {
     public class GodotUIProvider : IUIProvider
     {
-        private Window _rootWindow;
+        private readonly Window _rootWindow;
 
         public GodotUIProvider()
         {
             _rootWindow = new Window();
+        }
+
+        /// <summary>
+        /// Bind the provider to an existing window (for example the Godot main
+        /// window) instead of creating its own. When an existing window is
+        /// supplied the caller is responsible for having it inside the scene
+        /// tree; the provider will not add it.
+        /// </summary>
+        public GodotUIProvider(Window rootWindow)
+        {
+            _rootWindow = rootWindow ?? throw new ArgumentNullException(nameof(rootWindow));
         }
 
         public IWindow RootWindow => new GodotWindow(_rootWindow);
@@ -118,6 +129,52 @@ namespace V12TwoDog.Godot.UI
             modal.Show();
             return modal;
         }
+
+        public ITreeView CreateTreeView()
+            => new GodotTreeView();
+
+        public IAssetGrid CreateAssetGrid()
+            => new GodotAssetGrid();
+
+        public ICheckbox CreateCheckbox(string text, bool value)
+        {
+            var checkBox = new CheckBox { Text = text, ButtonPressed = value };
+            return new GodotCheckbox(checkBox);
+        }
+
+        public IToggle CreateToggle(string text, bool toggled)
+        {
+            var button = new Button { Text = text, ButtonPressed = toggled };
+            return new GodotToggle(button);
+        }
+
+        public ISlider CreateSlider(float min, float max, float step, float value)
+        {
+            var slider = new HSlider
+            {
+                MinValue = min,
+                MaxValue = max,
+                Step = step,
+                Value = value
+            };
+            return new GodotSlider(slider);
+        }
+
+        public INumericField CreateNumericField(float value, string format = "F2")
+        {
+            var field = new GodotNumericField { Format = format };
+            field.Value = value;
+            return field;
+        }
+
+        public ISplitter CreateSplitter(SplitterOrientation orientation)
+            => new GodotSplitter(orientation);
+
+        public IContextMenu CreateContextMenu()
+            => new GodotContextMenu();
+
+        public IFilePicker CreateFilePicker()
+            => new GodotFilePicker();
 
         public void ProcessFrame(double delta)
         {

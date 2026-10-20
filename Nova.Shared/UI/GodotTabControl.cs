@@ -20,6 +20,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _tabs;
 
+        public bool Visible
+        {
+            get => _tabs.Visible;
+            set => _tabs.Visible = value;
+        }
+
         public void AddTab(string name, IWidget content)
         {
             if (content.NativeControl is Control control)

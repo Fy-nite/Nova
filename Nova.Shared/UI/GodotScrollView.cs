@@ -14,6 +14,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _scroll;
 
+        public bool Visible
+        {
+            get => _scroll.Visible;
+            set => _scroll.Visible = value;
+        }
+
         public void SetContent(IWidget content)
         {
             foreach (var child in _scroll.GetChildren())

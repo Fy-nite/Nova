@@ -107,6 +107,10 @@ namespace V12TwoDog
         public RemotePlayerManager? RemotePlayerManager { get; private set; }
         public bool GamepakMode { get; private set; }
         public FrameSnapshot? LatestFrame => _latestFrame;
+        public long PendingFrameCount => Interlocked.Read(ref _pendingFrameCount);
+        public long LastFrameCaptureTicks => Interlocked.Read(ref _lastFrameCaptureTicks);
+        public long LastFrameApplyTicks => Interlocked.Read(ref _lastFrameApplyTicks);
+        public long LastFrameAgeTicks => Interlocked.Read(ref _lastFrameAgeTicks);
 
         private GodotPhysicsBackend? _physics;
         private DebugGameService? _debug;
@@ -117,7 +121,11 @@ namespace V12TwoDog
         private PickupSystem? _pickup;
 
         // ── Threading ──
-        private readonly ConcurrentQueue<FrameSnapshot> _frameQueue = new();
+        private readonly ConcurrentQueue<(FrameSnapshot Frame, long Timestamp)> _frameQueue = new();
+        private long _pendingFrameCount;
+        private long _lastFrameCaptureTicks;
+        private long _lastFrameApplyTicks;
+        private long _lastFrameAgeTicks;
         private FrameSnapshot? _latestFrame;
         private Thread? _v12Thread;
         private CancellationTokenSource? _cts;
@@ -434,8 +442,11 @@ namespace V12TwoDog
                     // which skips nodes whose snapshot is unchanged).
                     if (Root.ConsumeRenderDirty())
                     {
+                        var capture = System.Diagnostics.Stopwatch.StartNew();
                         var frame = Root.CaptureFrame();
-                        _frameQueue.Enqueue(frame);
+                        Interlocked.Exchange(ref _lastFrameCaptureTicks, capture.ElapsedTicks);
+                        _frameQueue.Enqueue((frame, System.Diagnostics.Stopwatch.GetTimestamp()));
+                        Interlocked.Increment(ref _pendingFrameCount);
                     }
                 }
                 catch (Exception ex)
@@ -490,14 +501,26 @@ namespace V12TwoDog
             // ── Tween remote player positions BEFORE capturing the frame ──
             RemotePlayerManager?.UpdateTweens(delta);
 
-            // ── Consume latest frame snapshot on main thread ──
-            while (_frameQueue.TryDequeue(out var frame))
-                _latestFrame = frame;
+            // ── Consume queued frames in order on the main thread ──
+            long oldestAgeTicks = 0;
+            bool receivedFrame = false;
+            while (_frameQueue.TryDequeue(out var queued))
+            {
+                Interlocked.Decrement(ref _pendingFrameCount);
+                if (!receivedFrame)
+                    oldestAgeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - queued.Timestamp;
+                receivedFrame = true;
+                _latestFrame = queued.Frame;
+            }
+            if (receivedFrame)
+                Interlocked.Exchange(ref _lastFrameAgeTicks, oldestAgeTicks);
 
             if (_latestFrame != null)
             {
+                var apply = System.Diagnostics.Stopwatch.StartNew();
                 RendererService!.ApplySnapshot(_latestFrame);
                 AudioPlayer.ApplySnapshot(_latestFrame);
+                Interlocked.Exchange(ref _lastFrameApplyTicks, apply.ElapsedTicks);
             }
 
             _debug?.Update(delta);

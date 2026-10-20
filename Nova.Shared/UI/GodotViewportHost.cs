@@ -16,6 +16,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _container;
 
+        public bool Visible
+        {
+            get => _container.Visible;
+            set => _container.Visible = value;
+        }
+
         public void SetRenderTarget(IRenderTarget target)
         {
             foreach (var child in _container.GetChildren())

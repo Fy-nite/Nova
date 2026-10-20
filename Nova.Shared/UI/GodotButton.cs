@@ -27,6 +27,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _button;
 
+        public bool Visible
+        {
+            get => _button.Visible;
+            set => _button.Visible = value;
+        }
+
         public void SetOnClick(Action onClick)
         {
             _button.Pressed += onClick;

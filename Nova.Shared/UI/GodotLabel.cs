@@ -18,6 +18,18 @@ namespace V12TwoDog.Godot.UI
             set => _label.Text = value;
         }
 
+        public float MinWidth
+        {
+            get => _label.CustomMinimumSize.X;
+            set => _label.CustomMinimumSize = new Vector2(value, _label.CustomMinimumSize.Y);
+        }
+
         public object NativeControl => _label;
+
+        public bool Visible
+        {
+            get => _label.Visible;
+            set => _label.Visible = value;
+        }
     }
 }

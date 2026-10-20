@@ -17,6 +17,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _hbox;
 
+        public bool Visible
+        {
+            get => _hbox.Visible;
+            set => _hbox.Visible = value;
+        }
+
         public void AddItem(IWidget item)
         {
             if (item.NativeControl is Node node)

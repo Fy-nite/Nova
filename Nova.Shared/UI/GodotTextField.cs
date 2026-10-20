@@ -25,7 +25,19 @@ namespace V12TwoDog.Godot.UI
             set => _lineEdit.PlaceholderText = value;
         }
 
+        public bool Enabled
+        {
+            get => _lineEdit.Editable;
+            set => _lineEdit.Editable = value;
+        }
+
         public object NativeControl => _lineEdit;
+
+        public bool Visible
+        {
+            get => _lineEdit.Visible;
+            set => _lineEdit.Visible = value;
+        }
 
         public void SetOnChanged(Action<string> onChanged)
         {

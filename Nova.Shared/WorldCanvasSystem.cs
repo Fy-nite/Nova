@@ -662,7 +662,7 @@ namespace V12TwoDog
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
             // Editor-transient subtrees (gizmo handles) never appear.
-            if (V12.Components.EditorTransientComponent.IsTransient(el)) return;
+            if (V12.Components.NonPersistentComponent.IsTransient(el)) return;
             sb.Append(el.Id).Append('|').Append(TreeRowText(el)).Append('|')
               .Append(el.GetComponent<UIStyleComponent>()?.StyleHint ?? "").Append(';');
             foreach (var child in el.Children)
@@ -673,7 +673,7 @@ namespace V12TwoDog
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
             // Editor-transient subtrees (gizmo handles) never appear.
-            if (V12.Components.EditorTransientComponent.IsTransient(el)) return;
+            if (V12.Components.NonPersistentComponent.IsTransient(el)) return;
             var item = parent != null ? tree.CreateItem(parent) : tree.CreateItem();
             wn.TreeItems[el.Id] = item;
             wn.TreeElements[el.Id] = el;

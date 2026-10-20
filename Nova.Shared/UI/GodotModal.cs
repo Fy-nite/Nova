@@ -26,6 +26,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _dialog;
 
+        public bool Visible
+        {
+            get => _dialog.Visible;
+            set => _dialog.Visible = value;
+        }
+
         public void Show()
         {
             _dialog.Popup();

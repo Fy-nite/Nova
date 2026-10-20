@@ -213,39 +213,34 @@ namespace V12TwoDog
             _target = null;
         }
 
-        /// <summary>Pin live parts to direct driving and write their node
-        /// transforms straight from the specs: parts follow the target in the
-        /// same frame with no snapshot glide, at any drag speed. Unpins parts
-        /// that no longer exist (rebuild/destroy).</summary>
+        /// <summary>Pin the gizmo ROOT to direct driving and write its node
+        /// transform straight from the root drive (position + uniform scale):
+        /// the whole tree tracks the target in the same frame with no snapshot
+        /// glide. Parts are fixed at unit size and ride the root. Unpins the
+        /// root if it no longer exists (rebuild/destroy).</summary>
         private void DriveParts(Camera3D cam)
         {
             if (_target == null) return;
             SyncGizmo(cam);
-            var drives = _sync.PartDrives;
+            if (!_sync.TryGetRootDrive(out var root)) return;
+
             for (int i = _drivenPartIds.Count - 1; i >= 0; i--)
             {
-                bool live = false;
-                foreach (var d in drives)
-                    if (d.ElementId == _drivenPartIds[i]) { live = true; break; }
-                if (!live)
-                {
-                    _renderer.SetEditorDriven(_drivenPartIds[i], false);
-                    _drivenPartIds.RemoveAt(i);
-                }
+                if (_drivenPartIds[i] == root.ElementId) continue;
+                _renderer.SetEditorDriven(_drivenPartIds[i], false);
+                _drivenPartIds.RemoveAt(i);
             }
-            foreach (var d in drives)
+            if (!_drivenPartIds.Contains(root.ElementId))
             {
-                if (!_drivenPartIds.Contains(d.ElementId))
-                {
-                    _renderer.SetEditorDriven(d.ElementId, true);
-                    _drivenPartIds.Add(d.ElementId);
-                }
-                var node = _renderer.GetNode(d.ElementId);
-                if (node == null) continue;
-                var basis = new Basis(new global::Godot.Quaternion(
-                    d.Rotation.X, d.Rotation.Y, d.Rotation.Z, d.Rotation.W));
-                node.Transform = new Transform3D(basis, new Vector3(d.Center.X, d.Center.Y, d.Center.Z));
+                _renderer.SetEditorDriven(root.ElementId, true);
+                _drivenPartIds.Add(root.ElementId);
             }
+            var node = _renderer.GetNode(root.ElementId);
+            if (node == null) return;
+            float s = root.UniformScale;
+            var basis = global::Godot.Basis.Identity.Scaled(new Vector3(s, s, s));
+            node.Transform = new Transform3D(basis,
+                new Vector3(root.Position.X, root.Position.Y, root.Position.Z));
         }
 
         private void UnpinAllParts()

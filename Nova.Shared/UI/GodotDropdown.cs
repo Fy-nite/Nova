@@ -22,6 +22,12 @@ namespace V12TwoDog.Godot.UI
 
         public object NativeControl => _optionButton;
 
+        public bool Visible
+        {
+            get => _optionButton.Visible;
+            set => _optionButton.Visible = value;
+        }
+
         public void SetOptions(IEnumerable<string> options)
         {
             _optionButton.Clear();
