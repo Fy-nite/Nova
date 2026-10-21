@@ -40,6 +40,9 @@ namespace V12TwoDog.Godot.UI
         public void ShowSave(string title, string description, string[] extensions, string suggestedFileName, Action<string?> onResult)
             => Show(title, description, extensions, suggestedFileName, FileDialog.FileModeEnum.SaveFile, onResult);
 
+        public void ShowFolder(string title, Action<string?> onResult)
+            => Show(title, "", Array.Empty<string>(), "", FileDialog.FileModeEnum.OpenDir, onResult);
+
         public void Cancel()
         {
             if (_dialog.Visible)

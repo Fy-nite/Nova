@@ -9,9 +9,9 @@ namespace V12TwoDog.Godot.UI
     /// Alt+drag-to-scrub. Fires <see cref="SetOnChanged"/> only when the parsed
     /// value actually changes.
     /// </summary>
-    public class GodotNumericField : INumericField
+    public partial class GodotNumericField : INumericField
     {
-        private sealed class NumericEdit : LineEdit
+        private sealed partial class NumericEdit : LineEdit
         {
             public Action<float>? OnScrub;
             public float ScrubValue;

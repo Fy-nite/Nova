@@ -24,9 +24,14 @@ namespace V12TwoDog.Godot.UI
             set
             {
                 if (!value || _scroll != null) return;
+                // HorizontalScrollMode.Disabled makes Godot's ScrollContainer
+                // report its content's full minimum WIDTH as its own minimum,
+                // which leaks into the parent SplitContainer and starves the
+                // sibling pane. Use Auto so a wide inspector/form can shrink
+                // (and scroll) instead of forcing the sibling to its minimum.
                 _scroll = new ScrollContainer
                 {
-                    HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+                    HorizontalScrollMode = ScrollContainer.ScrollMode.Auto,
                     VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
                     SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
                     SizeFlagsVertical = Control.SizeFlags.ExpandFill,

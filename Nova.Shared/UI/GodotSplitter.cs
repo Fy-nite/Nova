@@ -128,8 +128,12 @@ namespace V12TwoDog.Godot.UI
             float second = SizeOf(ChildAt(1));
             if (first <= 0f || second <= 0f) return false;
 
-            float separator = total - first - second;
-            if (separator < 0f || separator > 64f) separator = 12f;
+            // The separator is a fixed theme constant. Do NOT derive it from
+            // total-first-second: when a pane is clamped to its minimum by the
+            // layout, the deficit lands in that subtraction and the "separator"
+            // absorbs it, which corrupts the offset and makes this method fight
+            // the layout (pushing the crushed pane further down each pass).
+            float separator = Math.Max(0f, _split.GetThemeConstant("separation", "SplitContainer"));
             float defaultMid = (total - separator) * 0.5f;
             float targetFirst = _ratio * total;
             int offset = (int)Math.Round(targetFirst - defaultMid);

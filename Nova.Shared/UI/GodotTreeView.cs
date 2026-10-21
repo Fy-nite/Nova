@@ -12,56 +12,104 @@ namespace V12TwoDog.Godot.UI
     /// monotonic ordinal kept in TreeItem metadata, since Godot may hand back
     /// different managed TreeItem wrappers for the same native object.
     /// </summary>
-    public class GodotTreeView : ITreeView
+    public partial class GodotTreeView : ITreeView
     {
-        private sealed class DragTree : Tree
+        private sealed partial class DragTree : Tree
         {
             public Func<bool>? DragEnabled;
             public Func<GodotTreeItem, IContextMenu?>? ContextMenuRequested;
-            public Action<GodotTreeItem, GodotTreeItem>? ItemDropped;
+            public Action<GodotTreeItem, GodotTreeItem?, TreeDropPosition>? ItemDropped;
             public Action? RenameCanceled;
             public Func<long, GodotTreeItem?>? ItemFromOrdinal;
 
-            public override Variant _GetDragData(Vector2 atPosition)
-            {
-                if (DragEnabled?.Invoke() == false) return default;
+            // Self-managed row drag. Godot's native Tree starts a drag only
+            // through its own internal pipeline (its C++ control handles item
+            // press/move itself and never routes through _GetDragData for its
+            // items), so the built-in drop callbacks never fire for us. Driving
+            // the gesture from _GuiInput gives us the whole thing: arm on press
+            // over a row, start once the pointer clears a threshold, and drop on
+            // release. DropModeFlags stay Disabled the entire time; we draw the
+            // indicator ourselves from _Draw so plain hovering is inert.
+            private const float DragThreshold = 6f;
 
-                var item = GetItemAtPosition(atPosition);
-                if (item == null) return default;
-                SetDragPreview(DragPreviewFrom(item));
-                return Variant.From((long)item.GetMetadata(0));
+            private bool _pendingDrag;
+            private bool _dragging;
+            private Vector2 _pressPos;
+            private TreeItem? _dragItem;
+
+            // Where the pointer currently wants the drop, recomputed on every
+            // motion and consumed by the release. Null target = world root.
+            private TreeItem? _hoverItem;
+            private int _hoverSection;
+            private bool _hoverValid;
+
+            public override Variant _GetDragData(Vector2 atPosition) => default;
+
+            public override bool _CanDropData(Vector2 atPosition, Variant data) => false;
+
+            // Godot's native Tree handles mouse events in its C++ gui_input and
+            // accepts them, so the script virtual _GuiInput is never called for
+            // its items. Drive the drag gesture from _Input instead (enabled
+            // explicitly in the tree view's constructor), hit-testing against
+            // this control's own rect so events aimed elsewhere are ignored.
+            public override void _Input(InputEvent @event)
+            {
+                if (DragEnabled == null || ItemDropped == null) return;
+                if (@event is not InputEventMouse mouse) return;
+
+                // Only act on events that land inside this control.
+                var local = mouse.Position - GlobalPosition;
+                if (!new Rect2(Vector2.Zero, Size).HasPoint(local))
+                {
+                    if (_dragging && @event is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: false })
+                        CancelPendingDrag();
+                    return;
+                }
+
+                HandleLocalInput(@event, local);
             }
 
-            public override bool _CanDropData(Vector2 atPosition, Variant data)
-            {
-                if (DragEnabled?.Invoke() == false) return false;
-                if (data.VariantType != Variant.Type.Int) return false;
-                return GetItemAtPosition(atPosition) != null;
-            }
-
-            public override void _DropData(Vector2 atPosition, Variant data)
-            {
-                var target = GetItemAtPosition(atPosition);
-                if (target == null || data.VariantType != Variant.Type.Int) return;
-                var dragged = ItemFromOrdinal?.Invoke((long)data);
-                var dropOn = ItemFromOrdinal?.Invoke((long)target.GetMetadata(0));
-                if (dragged != null && dropOn != null)
-                    ItemDropped?.Invoke(dragged, dropOn);
-            }
-
-            public override void _GuiInput(InputEvent @event)
+            private void HandleLocalInput(InputEvent @event, Vector2 local)
             {
                 if (@event is InputEventKey { Pressed: true, Keycode: Key.Escape })
                 {
+                    CancelPendingDrag();
                     RenameCanceled?.Invoke();
-                    base._GuiInput(@event);
                     return;
                 }
-                if (@event is InputEventMouseButton mb
-                    && mb.ButtonIndex == MouseButton.Right
-                    && mb.Pressed)
+
+                if (@event is InputEventMouseButton mb && mb.ButtonIndex == MouseButton.Left)
                 {
-                    var item = GetItemAtPosition(mb.Position);
+                    if (mb.Pressed)
+                    {
+                        if (DragEnabled?.Invoke() == true)
+                        {
+                            var hit = GetItemAtPosition(local);
+                            if (hit != null)
+                            {
+                                _pendingDrag = true;
+                                _pressPos = local;
+                                _dragItem = hit;
+                            }
+                        }
+                        return;
+                    }
+
+                    if (_dragging)
+                    {
+                        FinishDrag(local);
+                        GetViewport().SetInputAsHandled();
+                        return;
+                    }
+                    CancelPendingDrag();
+                    return;
+                }
+
+                if (@event is InputEventMouseButton rmb
+                    && rmb.ButtonIndex == MouseButton.Right
+                    && rmb.Pressed)
+                {
+                    var item = GetItemAtPosition(local);
                     if (item != null && ContextMenuRequested != null)
                     {
                         var wrapper = ItemFromOrdinal?.Invoke((long)item.GetMetadata(0));
@@ -76,17 +124,134 @@ namespace V12TwoDog.Godot.UI
                             }
                         }
                     }
-                    AcceptEvent();
+                    GetViewport().SetInputAsHandled();
                     return;
                 }
+
+                if (@event is InputEventMouseMotion motion)
+                {
+                    if (_pendingDrag && !_dragging)
+                    {
+                        if (_pressPos.DistanceTo(motion.Position - GlobalPosition) >= DragThreshold)
+                        {
+                            _dragging = true;
+                            // No SetDragPreview: the self-managed gesture never
+                            // starts Godot's native drag pipeline, so
+                            // set_drag_preview would fail (!gui_is_dragging)
+                            // on every drag. The _Draw indicator is the visual.
+                            UpdateHover(local);
+                            QueueRedraw();
+                            GetViewport().SetInputAsHandled();
+                        }
+                    }
+                    else if (_dragging)
+                    {
+                        UpdateHover(local);
+                        QueueRedraw();
+                        GetViewport().SetInputAsHandled();
+                    }
+                }
+            }
+
+            public override void _GuiInput(InputEvent @event)
+            {
+                // Native Tree eats gui_input in C++, so this is a fallback for
+                // hosts/themes that do route it; the real path is _Input above.
                 base._GuiInput(@event);
             }
 
-            private static Control DragPreviewFrom(TreeItem item)
+            /// <summary>
+            /// Recompute the drop target from the pointer position. Rows read in
+            /// three bands (Unity/Godot convention): top quarter = before, middle
+            /// half = child, bottom quarter = after. Empty space below the rows
+            /// is a drop on the world root.
+            /// </summary>
+            private void UpdateHover(Vector2 atPosition)
             {
-                var label = new Label { Text = item.GetText(0) };
-                label.AddThemeColorOverride("font_color", new Color(0.9f, 0.9f, 0.9f));
-                return label;
+                var item = GetItemAtPosition(atPosition);
+                _hoverItem = item;
+                if (item == null)
+                {
+                    _hoverSection = 0;
+                    _hoverValid = true;
+                    return;
+                }
+
+                // Never offer a row as a target for itself.
+                if (ReferenceEquals(item, _dragItem))
+                {
+                    _hoverValid = false;
+                    return;
+                }
+
+                var rect = GetItemAreaRect(item, 0, -1);
+                float t = rect.Size.Y > 0f ? (atPosition.Y - rect.Position.Y) / rect.Size.Y : 0.5f;
+                _hoverSection = t < 0.25f ? -1 : t > 0.75f ? 1 : 0;
+                _hoverValid = true;
+            }
+
+            private void FinishDrag(Vector2 atPosition)
+            {
+                var dragged = _dragItem;
+                _dragging = false;
+                _pendingDrag = false;
+                _dragItem = null;
+                QueueRedraw();
+                if (dragged == null || !_hoverValid) return;
+
+                var wrapper = ItemFromOrdinal?.Invoke((long)dragged.GetMetadata(0));
+                if (wrapper == null) return;
+
+                if (_hoverItem == null)
+                {
+                    ItemDropped?.Invoke(wrapper, null, TreeDropPosition.Root);
+                    return;
+                }
+
+                var target = ItemFromOrdinal?.Invoke((long)_hoverItem.GetMetadata(0));
+                if (target == null) return;
+                var position = _hoverSection < 0 ? TreeDropPosition.Before
+                    : _hoverSection > 0 ? TreeDropPosition.After
+                    : TreeDropPosition.Child;
+                ItemDropped?.Invoke(wrapper, target, position);
+            }
+
+            private void CancelPendingDrag()
+            {
+                if (_dragging) QueueRedraw();
+                _pendingDrag = false;
+                _dragging = false;
+                _dragItem = null;
+                _hoverItem = null;
+                _hoverValid = false;
+            }
+
+            public override void _Draw()
+            {
+                if (!_dragging || !_hoverValid) return;
+
+                if (_hoverItem == null)
+                    return; // Root drop: no row to mark; the drop just lands.
+
+                var rect = GetItemAreaRect(_hoverItem, 0, -1);
+                float bottom = rect.Position.Y + rect.Size.Y;
+                // A marker in the tree's own ink rather than an accent pop: a
+                // thin full-width band that says where the row is going.
+                var color = new Color(0.62f, 0.72f, 0.86f, 0.9f);
+
+                if (_hoverSection == 0)
+                {
+                    // Child: outline the row it would land inside.
+                    DrawRect(rect, color, filled: false, width: 1.5f);
+                }
+                else
+                {
+                    float y = _hoverSection < 0 ? rect.Position.Y : bottom;
+                    DrawLine(
+                        new Vector2(rect.Position.X + 1f, y),
+                        new Vector2(rect.Position.X + rect.Size.X - 1f, y),
+                        color, 1.5f);
+                }
             }
         }
 
@@ -101,6 +266,10 @@ namespace V12TwoDog.Godot.UI
         public GodotTreeView()
         {
             _tree = new DragTree { HideRoot = true };
+            // Native Tree consumes gui_input in C++, so item drags and context
+            // clicks have to be caught downstream in _Input; that only runs if
+            // input processing is on.
+            _tree.SetProcessInput(true);
             _tree.ItemSelected += OnItemSelected;
             _tree.ItemEdited += OnItemEdited;
             _tree.RenameCanceled = CancelRename;
@@ -109,6 +278,9 @@ namespace V12TwoDog.Godot.UI
         }
 
         public object NativeControl => _tree;
+
+        /// <summary>Test hook: the live Godot tree, for input probes.</summary>
+        public Tree NativeTree => _tree;
 
         public bool Visible
         {
@@ -200,10 +372,12 @@ namespace V12TwoDog.Godot.UI
         public void SetDropEnabled(bool enabled)
             => _dropEnabled = enabled;
 
-        public void SetOnItemDropped(Action<ITreeItem, ITreeItem> onItemDropped)
+        public void SetOnItemDropped(Action<ITreeItem, ITreeItem?, TreeDropPosition> onItemDropped)
         {
             _tree.ItemDropped = onItemDropped;
             _tree.DragEnabled = () => _dropEnabled;
+            // DragTree drives the gesture itself (see _GuiInput); Godot's
+            // DropModeFlags stay Disabled so hovering never paints an indicator.
         }
 
         public void SetOnContextMenuRequested(Func<ITreeItem, IContextMenu?> onContextMenuRequested)

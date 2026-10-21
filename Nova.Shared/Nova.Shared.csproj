@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Godot.NET.Sdk/4.7.0">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -9,10 +9,6 @@
 	<ItemGroup>
 	<ProjectReference Include="$(V12BasicProject)" />
 	  <ProjectReference Include="$(V12EngineProject)" />
-	</ItemGroup>
-	<ItemGroup>
-		<PackageReference Include="GodotSharp" Version="4.7.0" />
-		<PackageReference Include="GodotSharpEditor" Version="4.7.0" />
 	</ItemGroup>
 
 </Project>
