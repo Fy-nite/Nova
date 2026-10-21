@@ -227,7 +227,7 @@ namespace V12TwoDog.Godot.UI
         {
             // First run: the folder doesn't exist yet, and GetFilesAt would
             // push a scary ERROR about it every startup.
-            if (!DirAccess.DirExists(Dir)) return;
+            if (!DirAccess.DirExistsAbsolute(Dir)) return;
             foreach (var file in DirAccess.GetFilesAt(Dir))
             {
                 if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
