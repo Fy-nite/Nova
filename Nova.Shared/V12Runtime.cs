@@ -37,6 +37,12 @@ namespace V12TwoDog
         /// <summary>Set up the NetworkCables client/server and sync handlers.</summary>
         public bool EnableNetworking { get; set; } = true;
 
+        /// <summary>Create the DebugGameService, which draws a Label3D
+        /// world/element dump at a "debug" slot in the scene. Games leave it
+        /// on; the studio editor turns it off so no stray labels float in
+        /// the 3D viewport.</summary>
+        public bool EnableDebugOverlay { get; set; } = true;
+
         /// <summary>Port used when connecting (client) or listening (server).</summary>
         public int NetworkPort { get; set; } = 7777;
 
@@ -173,9 +179,12 @@ namespace V12TwoDog
                 Root.Registry.Register("InputService", inputService);
             }
 
-            _debug = new DebugGameService();
-            _debug.Initialize(Root);
-            Root.Registry.Register("DebugGameService", _debug);
+            if (_options.EnableDebugOverlay)
+            {
+                _debug = new DebugGameService();
+                _debug.Initialize(Root);
+                Root.Registry.Register("DebugGameService", _debug);
+            }
 
             // ── XR: attempt now, keep retrying while the runtime runs ──
             if (_options.EnableXR)

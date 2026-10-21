@@ -19,6 +19,17 @@ namespace V12TwoDog.Godot.UI
 
         public string Name { get; set; }
 
+        /// <summary>Floor width for the PanelContainer. The scroll container
+        /// hides content width from the parent (see UseScrollableContent), so
+        /// a pane that must stay usable (the inspector) declares its floor
+        /// here and the parent SplitContainer clamps the split to it.</summary>
+        public float MinWidth
+        {
+            get => _panel.CustomMinimumSize.X;
+            set => _panel.CustomMinimumSize =
+                new Vector2(value, _panel.CustomMinimumSize.Y);
+        }
+
         public bool UseScrollableContent
         {
             set

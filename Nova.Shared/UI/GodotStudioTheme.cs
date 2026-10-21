@@ -278,6 +278,7 @@ namespace V12TwoDog.Godot.UI
             ("AccentButton", "Button"), ("DangerButton", "Button"),
             ("MutedLabel", "Label"), ("ErrorLabel", "Label"),
             ("SectionLabel", "Label"),                 // "Colour", "UV", "Textures" sub-headers
+            ("GroupLabel", "Label"),                   // inspector group headings ("Components")
             ("ComponentCard", "PanelContainer"),       // backing behind one component in the inspector
             ("ComponentHeader", "Button"),             // flat clickable header row (if not using FoldableContainer)
         };
@@ -295,6 +296,8 @@ namespace V12TwoDog.Godot.UI
         {
             var theme = new Theme { DefaultFontSize = 13 };
             foreach (var (name, @base) in Variations) theme.SetTypeVariation(name, @base);
+            // Group headings sit above the 13px body scale.
+            theme.SetFontSize("font_size", "GroupLabel", 16);
             foreach (var r in ColorRules) theme.SetColor(r.Item, r.Type, p[r.Slot]);
             foreach (var r in BoxRules) theme.SetStylebox(r.Item, r.Type, r.Build(p));
             foreach (var r in ConstRules) theme.SetConstant(r.Item, r.Type, r.Value);

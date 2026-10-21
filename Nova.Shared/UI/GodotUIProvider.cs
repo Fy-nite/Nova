@@ -176,6 +176,12 @@ namespace V12TwoDog.Godot.UI
         public IFilePicker CreateFilePicker()
             => new GodotFilePicker();
 
+        public void ApplyVariation(IWidget widget, string variation)
+        {
+            if (widget.NativeControl is Control control)
+                control.ThemeTypeVariation = variation;
+        }
+
         public void ProcessFrame(double delta)
         {
             // Godot handles its own frame processing

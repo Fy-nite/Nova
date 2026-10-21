@@ -39,6 +39,9 @@ namespace V12TwoDog.Godot.UI
         }
 
         public void AddChild(IWidget child)
+            => AddChild(child, false);
+
+        public void AddChild(IWidget child, bool expand)
         {
             if (child.NativeControl is Node node)
                 _hbox.AddChild(node);
@@ -49,8 +52,9 @@ namespace V12TwoDog.Godot.UI
             // so the rule has to live where the row is assembled. Labels,
             // buttons and checkboxes stay hugging; the toolbar bypasses this
             // wrapper entirely.
-            if (child.NativeControl is LineEdit or OptionButton)
-                ((Control)child.NativeControl).SizeFlagsHorizontal |= Control.SizeFlags.Expand;
+            if (child.NativeControl is Control control
+                && (expand || control is LineEdit or OptionButton))
+                control.SizeFlagsHorizontal |= Control.SizeFlags.Expand;
         }
 
         public void RemoveChild(IWidget child)
