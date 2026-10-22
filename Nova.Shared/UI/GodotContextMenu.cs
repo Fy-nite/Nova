@@ -26,7 +26,7 @@ namespace V12TwoDog.Godot.UI
             _popup = new PopupMenu();
             _popup.AllowSearch = true; // type-ahead narrows the visible items
             _popup.IdPressed += OnIdPressed;
-            _popup.PopupHide += () => _actions.Clear();
+            _popup.PopupHide += OnPopupHide;
         }
 
         public object NativeControl => _popup;
@@ -114,6 +114,17 @@ namespace V12TwoDog.Godot.UI
             // Submenu picks keep the root popup open by default; the whole
             // menu is one action surface, so dismiss the chain.
             _root?._popup.Hide();
+        }
+
+        private void OnPopupHide()
+        {
+            // The shown menu is adopted onto the window and never removed, so free
+            // the root (and its submenu children) once it hides to stop detached
+            // PopupMenu nodes accumulating across opens. We must NOT clear
+            // _actions on hide: on a submenu pick popup_hide fires before
+            // id_pressed, and clearing drops the click's callback.
+            if (_root == null)
+                _popup.QueueFree();
         }
     }
 }

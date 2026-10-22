@@ -155,6 +155,14 @@ namespace V12TwoDog.Godot.UI
         public static Palette Find(string name) =>
             _all.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) ?? Slate;
 
+        /// Like Find, but tells you whether the name actually exists (Find silently falls back to Slate).
+        public static bool TryFind(string name, out Palette palette)
+        {
+            var found = _all.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+            palette = found ?? Slate;
+            return found != null;
+        }
+
         /// Adds a palette, replacing any existing one with the same name.
         public static void Register(Palette p)
         {
@@ -218,16 +226,13 @@ namespace V12TwoDog.Godot.UI
         {
             DirAccess.MakeDirRecursiveAbsolute(Dir);
             var file = string.Concat(p.Name.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_'));
-            using var f = global::Godot.FileAccess.Open($"{Dir}/{file}.json", global::Godot.FileAccess.ModeFlags.Write);
+            using var f = global::Godot.FileAccess.Open($"{Dir}/{file}.json",global::Godot.FileAccess.ModeFlags.Write);
             if (f == null) { GD.PushWarning($"Couldn't save palette '{p.Name}'"); return; }
             f.StoreString(ToJson(p));
         }
 
         public static void LoadAll()
         {
-            // First run: the folder doesn't exist yet, and GetFilesAt would
-            // push a scary ERROR about it every startup.
-            if (!DirAccess.DirExistsAbsolute(Dir)) return;
             foreach (var file in DirAccess.GetFilesAt(Dir))
             {
                 if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
@@ -278,7 +283,6 @@ namespace V12TwoDog.Godot.UI
             ("AccentButton", "Button"), ("DangerButton", "Button"),
             ("MutedLabel", "Label"), ("ErrorLabel", "Label"),
             ("SectionLabel", "Label"),                 // "Colour", "UV", "Textures" sub-headers
-            ("GroupLabel", "Label"),                   // inspector group headings ("Components")
             ("ComponentCard", "PanelContainer"),       // backing behind one component in the inspector
             ("ComponentHeader", "Button"),             // flat clickable header row (if not using FoldableContainer)
         };
@@ -296,8 +300,6 @@ namespace V12TwoDog.Godot.UI
         {
             var theme = new Theme { DefaultFontSize = 13 };
             foreach (var (name, @base) in Variations) theme.SetTypeVariation(name, @base);
-            // Group headings sit above the 13px body scale.
-            theme.SetFontSize("font_size", "GroupLabel", 16);
             foreach (var r in ColorRules) theme.SetColor(r.Item, r.Type, p[r.Slot]);
             foreach (var r in BoxRules) theme.SetStylebox(r.Item, r.Type, r.Build(p));
             foreach (var r in ConstRules) theme.SetConstant(r.Item, r.Type, r.Value);
@@ -506,7 +508,8 @@ namespace V12TwoDog.Godot.UI
             root.TreeExited += () => Changed -= Handler;
         }
 
-        /// Floating windows don't inherit the parent's theme. Bind them too.
+        /// Only needed for windows that aren't descendants of an already-bound root
+        /// (a Window parented under a themed Control/Window inherits its theme).
         public static void Bind(Window window)
         {
             window.Theme = Theme;

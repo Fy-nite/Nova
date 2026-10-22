@@ -39,6 +39,25 @@ namespace V12TwoDog.Godot.UI
             return new GodotWindow(window);
         }
 
+        public string Palletname
+        {
+            get => StudioThemeManager.Current.Name;
+            set => SetPallet(value);
+        }
+
+
+        public IReadOnlyList<string> PalletNames => Palettes.All.Select(p => p.Name).ToList();
+
+        public void SetPallet(string name)
+        {
+            if (!Palettes.TryFind(name, out var p))
+            {
+                StudioThemeManager.Set(V12TwoDog.Godot.UI.Palettes.Static);
+                return;
+            }
+            StudioThemeManager.Set(p);
+        }
+
         public IViewportHost CreateViewportHost()
         {
             var container = new SubViewportContainer();
