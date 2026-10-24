@@ -716,6 +716,10 @@ namespace V12TwoDog
             var canvas = el.GetComponent<CanvasComponent>();
             if (canvas != null)
             {
+                // Engine-level Paper/Quill is now the default for screen-space HUD (meshes via GodotPaperCanvasRenderer).
+                // Keep WorldCanvasSystem for world-space 3D quads, but skip screen-space when Paper is active.
+                if (canvas.ScreenSpace && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+                    return;
                 found.Add(el.Id);
                 if (_canvases.TryGetValue(el.Id, out var cn))
                     UpdateCanvas(cn, el);

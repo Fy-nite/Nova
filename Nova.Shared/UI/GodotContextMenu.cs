@@ -37,7 +37,7 @@ namespace V12TwoDog.Godot.UI
             set => _popup.Visible = value;
         }
 
-        public void AddItem(string label, Action onClick, bool enabled = true)
+        public void AddItem(string label, Action onClick, bool enabled = true, string icon = "")
         {
             var id = _actions.Count;
             _actions.Add(onClick);
@@ -49,7 +49,7 @@ namespace V12TwoDog.Godot.UI
         public void AddSeparator()
             => _popup.AddSeparator();
 
-        public void AddSubmenu(string label, IContextMenu submenu)
+        public void AddSubmenu(string label, IContextMenu submenu, string icon = "")
         {
             if (submenu is not GodotContextMenu sub) return;
 

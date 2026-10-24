@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -233,6 +233,7 @@ namespace V12TwoDog.Godot.UI
 
         public static void LoadAll()
         {
+            if (!DirAccess.DirExistsAbsolute(Dir)) return;
             foreach (var file in DirAccess.GetFilesAt(Dir))
             {
                 if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
@@ -567,3 +568,4 @@ namespace V12TwoDog.Godot.UI
         }
     }
 }
+

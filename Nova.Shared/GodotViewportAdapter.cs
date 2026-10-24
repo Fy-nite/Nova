@@ -55,6 +55,13 @@ namespace V12TwoDog.Godot
         /// (main-thread only); defines the window the mouse is read in.</summary>
         private Control? _primaryContainer;
 
+        /// <summary>Host-supplied proxy used when a SubViewport is drawn by the UI
+        /// instead of a SubViewportContainer (Paper editor).</summary>
+        private Control? _viewportProxy;
+
+        /// <summary>Register the invisible Control that carries the UI-drawn viewport rect.</summary>
+        public void SetViewportProxy(Control? proxy) => _viewportProxy = proxy;
+
         public GodotViewportAdapter(Renderer renderer)
         {
             _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
@@ -132,7 +139,9 @@ namespace V12TwoDog.Godot
             foreach (var (id, vp) in _renderer.SceneViewports)
             {
                 if (!GodotObject.IsInstanceValid(vp)) continue;
-                var container = FindContainer(vp);
+                Control? container = FindContainer(vp);
+                if (container == null && _viewportProxy != null && GodotObject.IsInstanceValid(_viewportProxy))
+                    container = _viewportProxy;
                 if (container == null || !container.Visible) continue;
                 _primaryContainer ??= container;
 

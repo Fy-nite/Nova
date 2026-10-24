@@ -189,6 +189,8 @@ namespace V12TwoDog.Godot.UI
         public ISplitter CreateSplitter(SplitterOrientation orientation)
             => new GodotSplitter(orientation);
 
+        public ICodeEditor CreateCodeEditor() => new GodotCodeEditor();
+
         public IContextMenu CreateContextMenu()
             => new GodotContextMenu();
 

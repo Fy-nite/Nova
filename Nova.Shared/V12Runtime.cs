@@ -78,6 +78,10 @@ namespace V12TwoDog
 
         /// <summary>Capture the mouse at startup when not in XR.</summary>
         public bool LockMouseOnStart { get; set; } = true;
+
+        /// <summary>When true, the legacy Godot Control-based WorldCanvasSystem is created.
+        /// Set to false to disable Godot UI and use only Paper/Quill (engine-level default).</summary>
+        public bool EnableGodotUI { get; set; } = true;
     }
 
     /// <summary>
@@ -122,6 +126,10 @@ namespace V12TwoDog
         private DebugGameService? _debug;
         private LaserVisual? _laserVisual;
         private WorldCanvasSystem? _worldCanvas;
+        private V12.Core.UI.Paper.ProwlPaperRenderer? _paperRenderer;
+        private CanvasLayer? _paperLayer;
+        private Control? _paperRootControl;
+        private V12TwoDog.Paper.GodotPaperCanvasRenderer? _godotPaperRenderer;
         private DefaultEnvironment? _defaultEnv;
         private GamepakLauncher? _launcher;
         private PickupSystem? _pickup;
@@ -161,10 +169,47 @@ namespace V12TwoDog
             host.AddChild(AudioPlayer);
             Root.Registry.Register("IRenderer", RendererService);
 
-            // Created early so the editor gamepak can register its viewport
-            // pick/select handler during OnStart (gamepaks are loaded below).
-            _worldCanvas = new WorldCanvasSystem(host, (global::V12TwoDog.Renderer)RendererService);
-            Root.Registry.Register("WorldCanvasSystem", _worldCanvas);
+            // WorldCanvasSystem handles both world-space (3D quads) and screen-space (CanvasLayer Controls).
+            // When Paper is the engine-level default, WorldCanvasSystem still runs for world-space
+            // canvases but skips screen-space (handled by Paper mesh bridge). Set EnableGodotUI=false
+            // to fully disable even world-space (e.g., for headless).
+            if (_options.EnableGodotUI)
+            {
+                _worldCanvas = new WorldCanvasSystem(host, (global::V12TwoDog.Renderer)RendererService);
+                Root.Registry.Register("WorldCanvasSystem", _worldCanvas);
+                if (V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+                    GD.Print("[V12Runtime] WorldCanvasSystem active (world-space only, screen-space via Paper)");
+            }
+            else
+            {
+                GD.Print("[V12Runtime] Godot WorldCanvasSystem disabled by options.EnableGodotUI=false");
+            }
+
+            // Engine-level Paper/Origami/Quill UI (default, Godot renders meshes).
+            // Mirrors Paper/Samples/OpenTK/PaperRenderer.cs but via Godot ArrayMesh.
+            // When UseProwlPaper is false, WorldCanvasSystem (Godot Controls) remains sole UI.
+            if (V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+            {
+                try
+                {
+                    var vpSize = host.GetViewport().GetVisibleRect().Size;
+                    if (vpSize.X < 64) vpSize = new Vector2(1280, 720);
+                    _paperLayer = new CanvasLayer { Layer = 100, Name = "PaperLayer" };
+                    _paperRootControl = new Control { Name = "PaperRoot" };
+                    _paperRootControl.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+                    _paperLayer.AddChild(_paperRootControl);
+                    host.CallDeferred(Node.MethodName.AddChild, _paperLayer);
+                    _godotPaperRenderer = new V12TwoDog.Paper.GodotPaperCanvasRenderer(_paperLayer, _paperRootControl);
+                    _paperRenderer = new V12.Core.UI.Paper.ProwlPaperRenderer(_godotPaperRenderer, (int)vpSize.X, (int)vpSize.Y, 1f);
+                    Root.Registry.RegisterOrReplace("IUIRenderer", _paperRenderer);
+                    GD.Print($"[V12Runtime] Paper/Origami/Quill IUIRenderer active (mesh bridge, {vpSize.X}x{vpSize.Y}) - Godot Control fallback kept");
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[V12Runtime] Paper IUIRenderer init failed, falling back to Godot Controls: {ex.Message}");
+                    V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper = false;
+                }
+            }
 
             var renderTargetFactory = new GodotRenderTargetFactory();
             Root.Registry.Register(nameof(IRenderTargetFactory), renderTargetFactory);
@@ -397,6 +442,10 @@ namespace V12TwoDog
         {
             if (@event is global::Godot.InputEventMouseMotion motion)
                 InputHandler?.AccumulateMouseLook(motion.Relative);
+
+            // Feed the engine-level Paper canvas (screen-space CanvasComponent HUD).
+            if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+                V12TwoDog.Paper.PaperInput.Feed(_paperRenderer.PaperInstance, @event);
         }
 
         private void SetMouseCaptured(bool captured)
@@ -546,6 +595,31 @@ namespace V12TwoDog
             // ── World/screen-space UI (CanvasComponent) ──
             _worldCanvas?.Update(Root);
 
+            // ── Paper/Origami/Quill UI (engine-level default, Godot mesh bridge) ──
+            if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+            {
+                try
+                {
+                    var vp = _host.GetViewport().GetVisibleRect().Size;
+                    _paperRenderer.Resize((int)vp.X, (int)vp.Y, 1f);
+                    // Paper input: feed Godot pointer pos so OnClick hit-testing works.
+                    // HandleInputEvent already forwards InputService; for Paper we also sync the
+                    // Godot mouse pos directly (BeginFrame reads it via Paper's internal input).
+                    var mousePos = _host.GetViewport().GetMousePosition();
+                    // Paper's input is via its Canvas - we push via Godot Input forwarding:
+                    // ProwlPaperRenderer.BuildNode maps OnClick to ElementBuilder.OnClick which
+                    // Paper hit-tests using its internal pointer state. Feeding via InputService
+                    // is handled in HandleInputEvent; here we ensure viewport size stays current.
+                    var frame = Root.CaptureUI();
+                    _paperRenderer.ApplyUI(frame);
+                    _paperRenderer.step();
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[V12Runtime] Paper tick failed: {ex.Message}");
+                }
+            }
+
             // ── Default environment (sky/ambient/sun until the game defines them) ──
             _defaultEnv?.Update(Root);
         }
@@ -613,6 +687,9 @@ namespace V12TwoDog
             XR?.Cleanup();
             _worldCanvas?.Dispose();
             _worldCanvas = null;
+            try { _godotPaperRenderer?.Dispose(); } catch {}
+            if (_paperLayer != null && GodotObject.IsInstanceValid(_paperLayer)) _paperLayer.QueueFree();
+            _paperLayer = null; _paperRootControl = null; _paperRenderer = null; _godotPaperRenderer = null;
             _cts?.Cancel();
             _v12Thread?.Join(1000);
 
