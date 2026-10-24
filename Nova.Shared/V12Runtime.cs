@@ -604,6 +604,20 @@ namespace V12TwoDog
             GD.Print($"[V12Runtime] Registered gamepak '{pak.Name}' after start.");
         }
 
+        /// <summary>
+        /// Initialize and start game paks that were added to <see cref="Root"/>'s
+        /// GamepackLoader after this runtime was created (e.g. by loading a pak).
+        /// </summary>
+        public void StartLoadedGamepaks(int firstIndex)
+        {
+            if (firstIndex < 0 || firstIndex >= Root.Gamepaks.Gamepaks.Count)
+                return;
+
+            Root.Gamepaks.InitializeAndStartFrom(firstIndex);
+            GamepakMode = true;
+            AfterGamepakStart();
+        }
+
         /// <summary>Stop the worker thread and release XR resources.</summary>
         public void Shutdown()
         {
