@@ -108,7 +108,18 @@ namespace V12TwoDog.Paper
         public IReadOnlyList<string> PaletteNames =>
             V12TwoDog.Godot.UI.Palettes.All.Select(p => p.Name).ToList();
 
+        // V12.UI.IUIProvider still uses the historical "Pallet" spelling.
+        public IReadOnlyList<string> PalletNames => PaletteNames;
+
         public string CurrentPalette { get; private set; } = "Slate";
+
+        public string Palletname
+        {
+            get => CurrentPalette;
+            set => ApplyPalette(value);
+        }
+
+        public void SetPallet(string name) => ApplyPalette(name);
 
         public void SetPalette(string name) => ApplyPalette(name);
 
