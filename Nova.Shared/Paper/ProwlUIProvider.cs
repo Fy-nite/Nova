@@ -45,6 +45,23 @@ namespace V12TwoDog.Paper
         private global::Godot.Control? _viewportProxy;
         private global::Prowl.Vector.Rect _gameRect;
 
+        // WorldML editor UI (a separate World) hosted as a widget in the shell.
+        private ProwlWorldUIHost? _worldHost;
+
+        /// <summary>Creates the widget that renders a captured WorldML UI frame
+        /// as part of the shell layout (e.g. the bottom status row).</summary>
+        public IWidget CreateWorldUIHost()
+        {
+            _worldHost = Reg(new ProwlWorldUIHost(this));
+            return _worldHost;
+        }
+
+        /// <summary>Feeds the captured screen-space frame of the editor UI world.</summary>
+        public void SetWorldUIFrame(V12.Core.Rendering.UIFrame? frame)
+        {
+            if (_worldHost != null) _worldHost.Frame = frame;
+        }
+
         private static int _nextId;
 
         public ProwlUIProvider(Window window)
@@ -104,6 +121,11 @@ namespace V12TwoDog.Paper
         }
 
         // ── Palette ────────────────────────────────────────────────────────
+
+        // IUIProvider Pallet typo — keep in sync with IPaletteProvider Palette
+        string V12.UI.IUIProvider.Palletname { get => CurrentPalette; set => SetPalette(value); }
+        void V12.UI.IUIProvider.SetPallet(string name) => SetPalette(name);
+        IReadOnlyList<string> V12.UI.IUIProvider.PalletNames => PaletteNames;
 
         public IReadOnlyList<string> PaletteNames =>
             V12TwoDog.Godot.UI.Palettes.All.Select(p => p.Name).ToList();
@@ -634,6 +656,42 @@ namespace V12TwoDog.Paper
                 }
             }
         }
+        /// <summary>
+        /// Hosts a captured WorldML screen-space frame as a normal shell row. The
+        /// canvas is sized to its content (not the viewport), so a status strip
+        /// hugs its labels and participates in the shell layout instead of
+        /// covering the dock underneath.
+        /// </summary>
+        private sealed class ProwlWorldUIHost : ProwlWidget
+        {
+            private readonly ProwlUIProvider _owner;
+            private readonly Control _dummy = new() { MouseFilter = Control.MouseFilterEnum.Ignore };
+            private V12.Core.UI.Paper.ProwlPaperRenderer? _emitter;
+
+            /// <summary>Frame captured from the editor UI world (may be null before load).</summary>
+            public V12.Core.Rendering.UIFrame? Frame;
+
+            public ProwlWorldUIHost(ProwlUIProvider owner) { _owner = owner; }
+            public override object NativeControl => _dummy;
+
+            public override void Emit(PPaper paper)
+            {
+                if (Frame == null) return;
+
+                var el = Box(paper, "worldui", PLayout.Column, stretchW: true, stretchH: false);
+                el.Height(paper.Auto);
+                using (el.Enter())
+                {
+                    int pw = (int)paper.Width, ph = (int)paper.Height;
+                    _emitter ??= V12.Core.UI.Paper.ProwlPaperRenderer.CreateEmitter(
+                        paper, pw, ph, _owner.Font);
+                    _emitter.SetPaper(paper, pw, ph, _owner.Font);
+                    _emitter.AutoSizeScreenCanvas = true;
+                    _emitter.Emit(Frame);
+                }
+            }
+        }
+
         private sealed class ProwlVBox : ProwlWidget, IVBox
         {
             private readonly Control _dummy = new();

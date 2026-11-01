@@ -687,7 +687,10 @@ namespace V12TwoDog
             if (firstIndex < 0 || firstIndex >= Root.Gamepaks.Gamepaks.Count)
                 return;
 
-            Root.Gamepaks.InitializeAndStartFrom(firstIndex);
+            // V12.Pak API renamed InitializeAndStartFrom -> InitializeAll/StartAll in newer SDK.
+            // InitializeAll is idempotent, so calling it for the new range is safe.
+            Root.Gamepaks.InitializeAll();
+            Root.Gamepaks.StartAll();
             GamepakMode = true;
             AfterGamepakStart();
         }
