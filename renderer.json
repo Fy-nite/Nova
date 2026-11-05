@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "nova",
+  "name": "V12 Nova",
+  "version": "1.0.0",
+  "kind": "godot",
+  "distribution": "godot-export",
+  "singleFile": false,
+  "runtimeIdentifier": "win-x64",
+  "selfContained": true,
+  "executable": "Nova.exe",
+  "arguments": [],
+  "sourceProject": "Nova/V12TwoDog.Godot/V12TwoDog.Godot.csproj",
+  "publishedAtUtc": "2026-10-30T05:11:16.7678658Z",
+  "gamePakMode": "sibling"
+}

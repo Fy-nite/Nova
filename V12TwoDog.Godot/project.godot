@@ -12,7 +12,7 @@ custom_features="dotnet"
 
 [application]
 
-config/name="V12TwoDog"
+config/name="Nova.Godot"
 config/version="1.0.0"
 run/main_scene="uid://hdjvbjy78ms1"
 config/features=PackedStringArray("4.7", "C#")
@@ -35,7 +35,7 @@ project/assembly_name="V12TwoDog.Godot"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/dear-imgui-godot/plugin.cfg", "res://addons/debug_menu/plugin.cfg", "res://addons/godot_mcp/plugin.cfg")
+enabled=PackedStringArray("res://addons/dear-imgui-godot/plugin.cfg", "res://addons/godot_mcp/plugin.cfg")
 
 [input]
 

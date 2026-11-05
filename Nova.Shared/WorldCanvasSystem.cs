@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Godot;
 using V12.Components.UI;
@@ -18,7 +18,7 @@ namespace V12TwoDog
     /// each canvas.
     ///
     /// World-space canvases (<see cref="CanvasComponent.ScreenSpace"/> == false)
-    /// become 3D nodes — coloured quads + <c>Label3D</c> text — rooted at the
+    /// become 3D nodes â€” coloured quads + <c>Label3D</c> text â€” rooted at the
     /// element's world transform, so UI can be embedded on monitors, holograms,
     /// etc. Screen-space canvases become Godot <c>Control</c> nodes inside an
     /// overlay <c>CanvasLayer</c>, exactly like a HUD/menu.
@@ -70,6 +70,11 @@ namespace V12TwoDog
             _gizmo = new SceneGizmo(renderer);
         }
 
+        /// <summary>Host hook: returns the baked Paper texture for a world-space canvas.
+        /// When set, world canvases render Paper as a single textured quad while their
+        /// element nodes remain available for raycast hit-testing.</summary>
+        public Func<long, Texture2D?>? PaperCanvasTexture { get; set; }
+
         /// <summary>Register the element the orbit camera should drive (the
         /// editor's ViewportCamera). Pass null to stop driving.</summary>
         public void SetEditorCamera(IWorldElement? cameraElement)
@@ -86,7 +91,7 @@ namespace V12TwoDog
 
         /// <summary>
         /// Open a Save/Open file dialog (Godot's embedded FileDialog, which
-        /// renders fine in the 2dog host — the native OS dialogs cannot
+        /// renders fine in the 2dog host â€” the native OS dialogs cannot
         /// initialize here). The dialog is a transient window above the editor
         /// UI; <paramref name="onComplete"/> fires on the main thread with the
         /// chosen path, or null on cancel.
@@ -242,11 +247,11 @@ namespace V12TwoDog
                 _canvases[id].Free();
                 _canvases.Remove(id);
             }
-            // ── Interaction: raycast the aim ray against world canvases ──
+            // â”€â”€ Interaction: raycast the aim ray against world canvases â”€â”€
             EnsureInputRegistered();
             UpdateInteraction();
 
-            // ── Per-frame viewport input polling ──
+            // â”€â”€ Per-frame viewport input polling â”€â”€
             // Orbit and gizmo drags are driven by polling the container-local
             // mouse position every frame instead of reacting to motion events.
             // This stays responsive even when the host batches motion events or
@@ -275,16 +280,16 @@ namespace V12TwoDog
                 }
             }
 
-            // ── Editor gizmo follows its target when not being dragged ──
+            // â”€â”€ Editor gizmo follows its target when not being dragged â”€â”€
             _gizmo.Update();
             UpdateCamera();
         }
 
-        // ── 3D viewport picking + orbit camera (editor) ───────────────────
+        // â”€â”€ 3D viewport picking + orbit camera (editor) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         /// <summary>Route container-local input events (clicks/drags/wheel) to
         /// picking, the gizmo, and the orbit camera. Called via the
-        /// SubViewportContainer's gui_input signal — more reliable in this
+        /// SubViewportContainer's gui_input signal â€” more reliable in this
         /// embedded host than SubViewport input forwarding.</summary>
         private void HandleViewportContainerInput(WidgetNode wn, global::Godot.InputEvent evt)
         {
@@ -300,7 +305,7 @@ namespace V12TwoDog
                     }
                     break;
                 case InputEventMouseButton mb:
-                    // Use GetLocalMousePosition() rather than mb.Position — some
+                    // Use GetLocalMousePosition() rather than mb.Position â€” some
                     // host bindings deliver gui_input positions in window (not
                     // container-local) coordinates, which would make picking and
                     // gizmo grabs miss everything ("click through").
@@ -327,15 +332,15 @@ namespace V12TwoDog
                     break;
                 case InputEventMouseMotion mm:
                     // Continuous orbit / gizmo drags are driven by per-frame
-                    // polling (see Update) for responsiveness — motion events
+                    // polling (see Update) for responsiveness â€” motion events
                     // here are unnecessary and can be batched by the host.
                     break;
             }
         }
 
         /// <summary>Recompute the editor camera element's transform from the
-        /// orbit state (yaw / pitch / distance / focus). The world owns truth —
-        /// the element is a V12 element with a CameraComponent — and the render
+        /// orbit state (yaw / pitch / distance / focus). The world owns truth â€”
+        /// the element is a V12 element with a CameraComponent â€” and the render
         /// node is driven directly below so orbit input renders immediately
         /// instead of waiting on the 60Hz worker snapshot.</summary>
         private void UpdateCamera()
@@ -363,7 +368,7 @@ namespace V12TwoDog
                 camNode.Transform = t;
         }
 
-        /// <summary>World-space position of an element (System.Numerics →
+        /// <summary>World-space position of an element (System.Numerics â†’
         /// Godot).</summary>
         private static Vector3 ElementWorldPosGodot(IWorldElement el)
         {
@@ -373,7 +378,7 @@ namespace V12TwoDog
 
         private void HandleViewportPress(WidgetNode wn, Vector2 pos)
         {
-            // Grab a gizmo handle first — a gizmo drag consumes the press.
+            // Grab a gizmo handle first â€” a gizmo drag consumes the press.
             if (_gizmo.HandleMouseDown(pos, wn.ScreenViewport)) return;
 
             // Gizmo parts are grabbable, never selectable: clicks pass through.
@@ -486,7 +491,7 @@ namespace V12TwoDog
         {
             localPoint = default;
             var xform = cn.Root3D.GlobalTransform;
-            var normal = xform.Basis.Z; // +Z local → world
+            var normal = xform.Basis.Z; // +Z local â†’ world
             float denom = normal.Dot(dir);
             if (Mathf.Abs(denom) < 1e-6f) return false;
             float t = (xform.Origin - origin).Dot(normal) / denom;
@@ -629,13 +634,13 @@ namespace V12TwoDog
             }
         }
 
-        // ── Tree reconciliation (TreeComponent → Godot Tree) ──────────────
+        // â”€â”€ Tree reconciliation (TreeComponent â†’ Godot Tree) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         /// <summary>
         /// Mirror an element's child tree onto a Godot Tree control: each
         /// descendant element becomes a TreeItem nested by its element nesting,
         /// so the V12 hierarchy shows with native collapse arrows and
-        /// indentation. A signature over ids/names/styles gates the rebuild —
+        /// indentation. A signature over ids/names/styles gates the rebuild â€”
         /// when the structure is unchanged the existing items (and their
         /// collapse/scroll state) are left alone.
         /// </summary>
@@ -669,7 +674,7 @@ namespace V12TwoDog
                 TreeSig(sb, child);
         }
 
-        private void BuildTreeItem(WidgetNode wn, Tree tree, IWorldElement el, TreeItem? parent)
+        private void BuildTreeItem(WidgetNode wn, Tree tree, IWorldElement el, global::Godot.TreeItem? parent)
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
             // Editor-transient subtrees (gizmo handles) never appear.
@@ -731,7 +736,7 @@ namespace V12TwoDog
                 CollectCanvases(child, found);
         }
 
-        // ── Canvas lifecycle ──────────────────────────────────────────────
+        // â”€â”€ Canvas lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private CanvasNode CreateCanvas(IWorldElement el)
         {
@@ -769,6 +774,22 @@ namespace V12TwoDog
                 cn.Panel = MakeQuad(new Vector2(cn.Width, cn.Height), new Color(0.1f, 0.1f, 0.12f, 0.55f));
                 cn.Panel.Position = new Vector3(0, 0, -0.01f);
                 cn.Root3D.AddChild(cn.Panel);
+
+                cn.PaperWorld = PaperCanvasTexture != null;
+                if (cn.PaperWorld)
+                {
+                    var material = new StandardMaterial3D
+                    {
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                        AlbedoColor = Colors.White,
+                        TextureFilter = BaseMaterial3D.TextureFilterEnum.Linear,
+                    };
+                    cn.PaperQuad = MakeQuad(new Vector2(cn.Width, cn.Height), Colors.White);
+                    cn.PaperQuad.MaterialOverride = material;
+                    cn.PaperQuad.Position = new Vector3(0, 0, 0.001f);
+                    cn.Root3D.AddChild(cn.PaperQuad);
+                }
             }
 
             GD.Print($"[WorldCanvas] {(cn.ScreenSpace ? "screen-space" : "world-space")} canvas '{el.Name}' (id={el.Id}) attached.");
@@ -804,6 +825,17 @@ namespace V12TwoDog
                         mat.AlbedoTexture = null;
                     }
                 }
+
+                if (cn.PaperWorld && cn.PaperQuad != null)
+                {
+                    cn.PaperQuad.Scale = new Vector3(cn.Width, cn.Height, 1);
+                    if (cn.PaperQuad.MaterialOverride is StandardMaterial3D paperMat)
+                    {
+                        var texture = PaperCanvasTexture?.Invoke(el.Id);
+                        if (texture != null && paperMat.AlbedoTexture != texture)
+                            paperMat.AlbedoTexture = texture;
+                    }
+                }
             }
             else
             {
@@ -819,7 +851,7 @@ namespace V12TwoDog
                 }
                 // Show the opaque backdrop only while the MAIN screen (viewport 0)
                 // has no current camera. Cameras inside UI SubViewports (an editor
-                // GameView) don't count — their scene renders in the panel, and the
+                // GameView) don't count â€” their scene renders in the panel, and the
                 // main screen still needs the backdrop to hide Godot's fallback
                 // camera/sky behind the editor chrome.
                 if (cn.ScreenBackground != null)
@@ -840,7 +872,7 @@ namespace V12TwoDog
                     if (cn.ScreenSpace)
                     {
                         // RootControl is assigned by BuildScreenVisuals (it IS the
-                        // real Label/Button/… or the HBox/VBox layout container),
+                        // real Label/Button/â€¦ or the HBox/VBox layout container),
                         // then the reparent pass below inserts it into the right
                         // container.
                     }
@@ -854,7 +886,7 @@ namespace V12TwoDog
                 UpdateWidget(cn, wn, w);
             }
 
-            // ── Screen-space reparent pass ──
+            // â”€â”€ Screen-space reparent pass â”€â”€
             // Now that all layout containers (ScreenBox) have been built,
             // reparent each widget's RootControl under the correct container.
             if (cn.ScreenSpace)
@@ -909,7 +941,7 @@ namespace V12TwoDog
                 cn.Widgets.Remove(id);
             }
 
-            // ── Per-frame viewport upkeep ──
+            // â”€â”€ Per-frame viewport upkeep â”€â”€
             // The fallback editor camera is Current only while the world doesn't
             // provide its own current camera for this viewport.
             if (cn.ScreenSpace)
@@ -922,7 +954,7 @@ namespace V12TwoDog
                 }
             }
 
-            // ── Per-frame tree upkeep: mirror the tree element's children onto
+            // â”€â”€ Per-frame tree upkeep: mirror the tree element's children onto
             // the Godot Tree control (signature-gated inside).
             if (cn.ScreenSpace)
             {
@@ -950,7 +982,7 @@ namespace V12TwoDog
                     continue;
                 if (HasAnyUiComponent(child))
                     outWidgets.Add(child);
-                // Tree containers own their children as TreeItems — they are not
+                // Tree containers own their children as TreeItems â€” they are not
                 // widgets and must not be collected (or reparented) as controls.
                 if (child.GetComponent<TreeComponent>() != null)
                     continue;
@@ -979,7 +1011,7 @@ namespace V12TwoDog
                 || el.GetComponent<TreeComponent>() != null;
         }
 
-        // ── Widget rendering ──────────────────────────────────────────────
+        // â”€â”€ Widget rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private void UpdateWidget(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
@@ -1008,7 +1040,7 @@ namespace V12TwoDog
             if (el.GetComponent<IconComponent>() != null) return "icon";
             // Tree containers own their children (TreeItems), not widgets.
             if (el.GetComponent<TreeComponent>() != null) return "tree";
-            // Viewport must win over layout components — an element like an
+            // Viewport must win over layout components â€” an element like an
             // editor's GameView carries both a VLayoutComponent (panel sizing)
             // and a ViewportComponent (3D scene). Only the viewport build path
             // creates the SubViewport; treating it as a layout container would
@@ -1029,10 +1061,11 @@ namespace V12TwoDog
                 BuildWorldVisuals(cn, wn, el);
         }
 
-        // ── World-space visuals ───────────────────────────────────────────
+        // â”€â”€ World-space visuals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private void BuildWorldVisuals(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
+            if (cn.PaperWorld) return;
             string kind = wn.Kind;
             var size = Measure(el);
 
@@ -1286,7 +1319,7 @@ namespace V12TwoDog
             }
         }
 
-        // ── Screen-space visuals (Godot Control overlay) ──────────────────
+        // â”€â”€ Screen-space visuals (Godot Control overlay) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         /// <summary>Shared dark palette for the screen-space UI.</summary>
         private static class UIStyles
@@ -1453,7 +1486,7 @@ namespace V12TwoDog
                 {
                     wn.ScreenButton = new Button();
                     StyleButton(wn.ScreenButton);
-                    // Wire the native click to the V12 ButtonComponent — without
+                    // Wire the native click to the V12 ButtonComponent â€” without
                     // this, screen-space buttons render but never invoke OnClick.
                     var btnEl = el;
                     wn.ScreenButton.Pressed += () => InvokeClick(btnEl);
@@ -1473,8 +1506,8 @@ namespace V12TwoDog
                 {
                     wn.ScreenCheck = new CheckButton();
                     StyleToggle(wn.ScreenCheck);
-                    // Wire UI → component so user input isn't clobbered by the
-                    // per-frame component → UI push (same rule as text inputs).
+                    // Wire UI â†’ component so user input isn't clobbered by the
+                    // per-frame component â†’ UI push (same rule as text inputs).
                     var tg = el.GetComponent<ToggleComponent>();
                     if (tg != null)
                         wn.ScreenCheck.Toggled += on =>
@@ -1521,8 +1554,8 @@ namespace V12TwoDog
                     var ti = el.GetComponent<TextInputComponent>();
                     if (ti != null)
                     {
-                        // UI → component on every change and on blur: without
-                        // this, the per-frame component → UI push (below) resets
+                        // UI â†’ component on every change and on blur: without
+                        // this, the per-frame component â†’ UI push (below) resets
                         // whatever the user typed because the component never
                         // learns about it.
                         wn.ScreenEdit.TextChanged += text => ti.InvokeChanged(text);
@@ -1540,7 +1573,7 @@ namespace V12TwoDog
                     var vp = el.GetComponent<ViewportComponent>();
                     // Plain SubViewport: all mouse interaction is routed through
                     // the container's gui_input (see HandleViewportContainerInput)
-                    // — reliable in the embedded host, and gives us picking,
+                    // â€” reliable in the embedded host, and gives us picking,
                     // gizmo drags and the orbit camera from one code path.
                     wn.ScreenViewport = new SubViewport
                     {
@@ -1588,7 +1621,7 @@ namespace V12TwoDog
                     wn.ScreenViewportContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
                     wn.ScreenViewportContainer.AddChild(wn.ScreenViewport);
                     // All viewport interaction (pick / gizmo / orbit) comes
-                    // through here — positions are container-local pixels,
+                    // through here â€” positions are container-local pixels,
                     // matching the viewport's render size when Stretch is on.
                     wn.ScreenViewportContainer.GuiInput += evt => HandleViewportContainerInput(wn, evt);
                     wn.RootControl = wn.ScreenViewportContainer;
@@ -1687,7 +1720,7 @@ namespace V12TwoDog
                     tree.AddThemeColorOverride("font_color", UIStyles.Text);
                     tree.AddThemeColorOverride("font_selected_color", Colors.White);
                     tree.AddThemeColorOverride("tree_guide_color", new Color(0.28f, 0.29f, 0.34f));
-                    // Native Tree selection → invoke the row element's click
+                    // Native Tree selection â†’ invoke the row element's click
                     // (the editor's selection callback) via the shared path.
                     tree.ItemSelected += () => OnTreeItemSelected(wn);
                     wn.ScreenTree = tree;
@@ -1701,10 +1734,10 @@ namespace V12TwoDog
             }
 
             // RootControl IS the visual control itself (or the layout container).
-            // It has no parent yet — the reparent pass in UpdateCanvas inserts it
+            // It has no parent yet â€” the reparent pass in UpdateCanvas inserts it
             // into the correct container so Godot's containers can size it.
 
-            // LayoutElementComponent hints apply to any widget (spacers, rows…).
+            // LayoutElementComponent hints apply to any widget (spacers, rowsâ€¦).
             ApplySizeHints(wn.RootControl, el);
         }
 
@@ -1712,7 +1745,7 @@ namespace V12TwoDog
         /// Configure a screen-space layout container from its V12 element:
         /// separation from Spacing, an opaque panel StyleBox (with the element's
         /// Padding as content margins) so containers read as editor panels, and
-        /// Expand → Godot size flags so the panel absorbs leftover space along
+        /// Expand â†’ Godot size flags so the panel absorbs leftover space along
         /// the axis its parent lays out. LayoutElementComponent hints (min /
         /// preferred size) become Godot CustomMinimumSize so sidebars keep a
         /// usable width instead of collapsing to their text.
@@ -1738,7 +1771,7 @@ namespace V12TwoDog
             }
             box.AddThemeStyleboxOverride("panel", style);
 
-            // ── Sizing hints from LayoutElementComponent ──
+            // â”€â”€ Sizing hints from LayoutElementComponent â”€â”€
             var le = el.GetComponent<LayoutElementComponent>();
             float minW = le?.MinWidth > 0 ? le.MinWidth : 0f;
             float minH = le?.MinHeight > 0 ? le.MinHeight : 0f;
@@ -1835,7 +1868,7 @@ namespace V12TwoDog
                             wn.ScreenSlider.MaxValue = s.Max;
                             wn.ScreenSlider.Step = s.Step;
                             // Don't fight the user mid-drag: only push while not
-                            // focused (input already flows UI → component).
+                            // focused (input already flows UI â†’ component).
                             if (!wn.ScreenSlider.HasFocus() && Mathf.Abs(wn.ScreenSlider.Value - s.Value) > 0.0001f)
                                 wn.ScreenSlider.Value = s.Value;
                         }
@@ -1848,8 +1881,8 @@ namespace V12TwoDog
                         if (ti != null)
                         {
                             wn.ScreenEdit.PlaceholderText = ti.Placeholder;
-                            // Only push component → UI when the user isn't editing
-                            // the field; input already flows UI → component via
+                            // Only push component â†’ UI when the user isn't editing
+                            // the field; input already flows UI â†’ component via
                             // TextChanged/FocusExited wiring, so pushing while
                             // focused would clobber keystrokes.
                             if (!wn.ScreenEdit.HasFocus() && wn.ScreenEdit.Text != ti.Value)
@@ -1862,13 +1895,14 @@ namespace V12TwoDog
 
         private void ApplyVisualState(CanvasNode cn, WidgetNode wn, IWorldElement el)
         {
+            if (!cn.ScreenSpace && cn.PaperWorld) return;
             if (cn.ScreenSpace)
                 ApplyScreenVisualState(wn, el, wn.Kind);
             else
                 ApplyWorldVisualState(wn, el, wn.Kind);
         }
 
-        // ── Layout (world-space) ──────────────────────────────────────────
+        // â”€â”€ Layout (world-space) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private static Vector2 Measure(IWorldElement el)
         {
@@ -1962,7 +1996,7 @@ namespace V12TwoDog
                 : new Vector2(Measure(el).X, contentH);
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────
+        // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private static void ApplyStyle(IWorldElement el, Label3D label, float baseFontSize)
         {
@@ -1982,8 +2016,8 @@ namespace V12TwoDog
 
         /// <summary>
         /// Apply UIStyleComponent hints to a screen-space Label so panel headers
-        /// read as headers: "title" → larger bold caps, "muted" → dimmed,
-        /// "titlebar"/"compheader" → smaller bold with a subtle underline bar.
+        /// read as headers: "title" â†’ larger bold caps, "muted" â†’ dimmed,
+        /// "titlebar"/"compheader" â†’ smaller bold with a subtle underline bar.
         /// </summary>
         private static void ApplyScreenStyle(Label label, IWorldElement el)
         {
@@ -2061,7 +2095,7 @@ namespace V12TwoDog
         }
 
         /// <summary>
-        /// World transform (position + rotation, ignoring scale — scale is used
+        /// World transform (position + rotation, ignoring scale â€” scale is used
         /// only to size the canvas plane) of an element, accumulated from its
         /// parent chain. Read on the main thread; UI transforms are effectively
         /// static so a brief snapshot of the hierarchy is fine.
@@ -2085,7 +2119,7 @@ namespace V12TwoDog
             return new Transform3D(basis, new Vector3(pos.X, pos.Y, pos.Z));
         }
 
-        // ── Node bookkeeping ──────────────────────────────────────────────
+        // â”€â”€ Node bookkeeping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         private sealed class CanvasNode
         {
@@ -2096,6 +2130,8 @@ namespace V12TwoDog
 
             public Node3D Root3D;
             public MeshInstance3D Panel;
+            public bool PaperWorld;
+            public MeshInstance3D PaperQuad;
             public Control RootControl;
             public ColorRect ScreenBackground;
             public VBoxContainer LayoutBox;
@@ -2152,7 +2188,7 @@ namespace V12TwoDog
             // Tree container (TreeComponent)
             public Tree ScreenTree;
             public string TreeSignature = "";
-            public readonly Dictionary<long, TreeItem> TreeItems = new();
+            public readonly Dictionary<long, global::Godot.TreeItem> TreeItems = new();
             public readonly Dictionary<long, IWorldElement> TreeElements = new();
 
             public void FreeVisuals(bool screenSpace)

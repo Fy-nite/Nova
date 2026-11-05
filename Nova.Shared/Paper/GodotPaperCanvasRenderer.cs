@@ -20,7 +20,7 @@ namespace V12TwoDog.Paper
     /// vertex buffer, then push the draw call's scissor/brush/texture/text uniforms
     /// onto a cached <c>ShaderMaterial</c> and bind the brush texture + font atlas.
     /// </summary>
-    public sealed class GodotPaperCanvasRenderer : PaperCanvasRenderer
+    public class GodotPaperCanvasRenderer : PaperCanvasRenderer
     {
         private readonly CanvasLayer _layer;
         private readonly Control _root;
@@ -30,6 +30,13 @@ namespace V12TwoDog.Paper
         private readonly List<MeshInstance2D> _pool = new();
         private readonly Dictionary<object, GodotTexture> _textures = new();
         private readonly Dictionary<int, ShaderMaterial> _materials = new();
+
+        /// <summary>
+        /// Resolves an engine Paper viewport texture to a host-owned Godot texture
+        /// (normally a SubViewport's ViewportTexture). Without this the viewport
+        /// draw falls back to the white texture.
+        /// </summary>
+        public Func<long, global::Godot.Texture2D?>? ViewportTextureResolver { get; set; }
 
         private sealed class GodotTexture
         {
@@ -125,6 +132,8 @@ namespace V12TwoDog.Paper
         private global::Godot.Texture2D ResolveTexture(object? o)
         {
             if (o is GodotTexture gt) return gt.Texture;
+            if (o is PaperViewportTexture viewport)
+                return ViewportTextureResolver?.Invoke(viewport.Id) ?? _whiteTexture;
             // Host-owned textures (e.g. a SubViewport's ViewportTexture) are drawn
             // straight by DrawImage, so bind them as-is.
             if (o is global::Godot.Texture2D external) return external;

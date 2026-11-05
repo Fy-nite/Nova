@@ -21,6 +21,17 @@ Game (Node3D)
 └── ImGuiApi
 ```
 
+## Launching a `.v12pak`
+
+Like `Pulsar.GL`, this project can act as the game executable itself:
+
+- `<executable name>.v12pak` next to the executable is launched automatically.
+- `--pak=path\to\game.v12pak` overrides that lookup (handy when running from the editor).
+- The pak's first world is selected and its game paks are started.
+
+A game pak registered explicitly by an embedding host
+(`V12Host.RegisterGamePak`) still takes precedence over the sibling pak.
+
 ## Input Actions
 
 | Action | Keys/Buttons |

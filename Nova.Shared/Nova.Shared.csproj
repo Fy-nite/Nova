@@ -6,9 +6,24 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Match the V12 engine's Debug-only profiling switch. Nova only calls the
+    engine's V12Profiler wrapper, so it needs the TRACY symbol (to compile the
+    zone call sites in Debug) but not the Tracy package itself.
+  -->
+  <PropertyGroup>
+    <V12Tracy Condition="'$(V12Tracy)' == '' and ('$(Configuration)' == 'Debug' or '$(Configuration)' == 'ExportDebug')">true</V12Tracy>
+    <V12Tracy Condition="'$(V12Tracy)' == ''">false</V12Tracy>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(V12Tracy)' == 'true'">
+    <DefineConstants>$(DefineConstants);TRACY</DefineConstants>
+  </PropertyGroup>
+
 	<ItemGroup>
 	<ProjectReference Include="$(V12BasicProject)" />
 	  <ProjectReference Include="$(V12EngineProject)" />
+	  <ProjectReference Include="$(V12PakProject)" />
 	</ItemGroup>
 
 </Project>

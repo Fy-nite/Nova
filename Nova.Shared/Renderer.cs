@@ -5,6 +5,7 @@ using Godot;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.Core.Rendering;
+using V12.Core.Diagnostics;
 using V12.Components;
 
 namespace V12TwoDog
@@ -314,6 +315,9 @@ namespace V12TwoDog
 
 		public void step()
 		{
+#if TRACY
+			using var zone = V12Profiler.BeginZone("Renderer.step", V12Profiler.Colors.Renderer);
+#endif
 			var snapshot = new FrameSnapshot();
 			snapshot.Renderables.Capacity = _renderables.Count;
 			var parentChainIds = new HashSet<long>();
@@ -507,6 +511,11 @@ namespace V12TwoDog
 		public void ApplySnapshot(FrameSnapshot snapshot)
 		{
 			if (snapshot == null) return;
+
+#if TRACY
+			using var zone = V12Profiler.BeginZone("Renderer.ApplySnapshot", V12Profiler.Colors.Renderer);
+			zone.SetText($"renderables={snapshot.Renderables.Count}");
+#endif
 
 			bool pickDataChanged = false;
 			var currentIds = new HashSet<long>();

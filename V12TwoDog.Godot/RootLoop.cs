@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using V12;
 
 /// <summary>
@@ -29,6 +30,11 @@ public partial class RootLoop : Node3D
         // from the host's referenced assemblies (which would double-load it).
         var explicitPaks = V12TwoDog.GamepakHandoff.Pending;
 
+        // Like Pulsar.GL: a .v12pak next to the executable is the game. It wins
+        // over paks compiled into / discovered from the host, but an explicit
+        // host hand-off still takes precedence.
+        var siblingPak = explicitPaks.Count > 0 ? null : FindSiblingPak();
+
         var options = new V12TwoDog.V12RuntimeOptions
         {
             // Prefer gamepaks shipped by the embedding app itself. A consumer
@@ -36,8 +42,9 @@ public partial class RootLoop : Node3D
             // NOT load the bundled Sample Game from libs/nova/V12.SampleGame —
             // its entry assembly is used instead. Bare hosts (editor Play, plain
             // 2dog hosts) fall back to the Sample Game so they still get a scene.
-            GamepakAssemblies = explicitPaks.Count > 0 ? null : DiscoverHostGamepaks(),
+            GamepakAssemblies = explicitPaks.Count > 0 || siblingPak != null ? null : DiscoverHostGamepaks(),
             Gamepaks = explicitPaks.Count > 0 ? new List<IV12Gamepack>(explicitPaks) : null,
+            PakPath = siblingPak,
             ShowLauncher = false,
             CreateEmptyWorldIfNoPak = false,
         };
@@ -81,6 +88,67 @@ public partial class RootLoop : Node3D
                     options.NetworkPort = port;
             }
         }
+    }
+
+    /// <summary>
+    /// Finds the pak to launch, matching Pulsar.GL's host: <c>--pak=&lt;path&gt;</c>
+    /// when supplied, otherwise <c>&lt;executable name&gt;.v12pak</c> in the
+    /// executable's own directory (case-insensitive on platforms that allow it).
+    /// </summary>
+    private static string? FindSiblingPak()
+    {
+        foreach (var arg in OS.GetCmdlineArgs())
+        {
+            if (!arg.StartsWith("--pak=", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var value = arg.Substring("--pak=".Length).Trim().Trim('"');
+            if (value.Length == 0) continue;
+
+            return Path.GetFullPath(value);
+        }
+
+        var exePath = ResolveExecutablePath();
+        var directory = exePath != null
+            ? Path.GetDirectoryName(exePath)
+            : AppContext.BaseDirectory;
+        if (string.IsNullOrEmpty(directory)) return null;
+
+        var exeName = exePath != null ? Path.GetFileNameWithoutExtension(exePath) : null;
+        if (string.IsNullOrEmpty(exeName)) return null;
+
+        var exact = Path.Combine(directory, exeName + ".v12pak");
+        if (File.Exists(exact)) return exact;
+
+        foreach (var candidate in Directory.EnumerateFiles(directory, "*.v12pak", SearchOption.TopDirectoryOnly))
+        {
+            if (string.Equals(Path.GetFileNameWithoutExtension(candidate), exeName, StringComparison.OrdinalIgnoreCase))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The host executable path, falling back to the entry assembly when the
+    /// process was started through the shared <c>dotnet</c> muxer.
+    /// </summary>
+    private static string? ResolveExecutablePath()
+    {
+        var executablePath = OS.GetExecutablePath();
+        if (!string.IsNullOrEmpty(executablePath) &&
+            !string.Equals(Path.GetFileNameWithoutExtension(executablePath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return executablePath;
+        }
+
+        var processPath = System.Environment.ProcessPath;
+        if (!string.IsNullOrEmpty(processPath) &&
+            !string.Equals(Path.GetFileNameWithoutExtension(processPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return processPath;
+        }
+
+        return System.Reflection.Assembly.GetEntryAssembly()?.Location;
     }
 
     /// <summary>

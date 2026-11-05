@@ -5,7 +5,7 @@
              apps to reference. Consumers boot it via V12TwoDog.V12Host. -->
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <IsPackable>false</IsPackable>
+        <IsPackable>true</IsPackable>
 		<TwoDogVariant>editor</TwoDogVariant>
 		<!-- This host references a Godot.NET.Sdk game project AND 2dog.engine
              (which embeds Godot.SourceGenerators) — drop the duplicates. -->
