@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using GodotTreeItem = Godot.TreeItem;
 using V12.Components.UI;
 using V12.Core;
 using V12.Core.Core.Interfaces;
@@ -669,7 +670,7 @@ namespace V12TwoDog
                 TreeSig(sb, child);
         }
 
-        private void BuildTreeItem(WidgetNode wn, Tree tree, IWorldElement el, TreeItem? parent)
+        private void BuildTreeItem(WidgetNode wn, Tree tree, IWorldElement el, GodotTreeItem? parent)
         {
             if (el.GetComponent<CanvasComponent>() != null) return;
             // Editor-transient subtrees (gizmo handles) never appear.
@@ -2152,7 +2153,7 @@ namespace V12TwoDog
             // Tree container (TreeComponent)
             public Tree ScreenTree;
             public string TreeSignature = "";
-            public readonly Dictionary<long, TreeItem> TreeItems = new();
+            public readonly Dictionary<long, GodotTreeItem> TreeItems = new();
             public readonly Dictionary<long, IWorldElement> TreeElements = new();
 
             public void FreeVisuals(bool screenSpace)

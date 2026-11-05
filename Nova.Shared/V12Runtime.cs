@@ -2,6 +2,8 @@ using Godot;
 
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
+using System.Runtime.Loader;
 using System.Text;
 using System.Threading;
 using V12;
@@ -14,6 +16,7 @@ using V12.Core.NetworkCable;
 using V12.Core.Networking;
 using V12.Core.Rendering;
 using V12.Core.Systems;
+using V12.Pak;
 using V12.Rendering;
 using V12.UI;
 using V12TwoDog.Godot.Rendering;
@@ -51,6 +54,13 @@ namespace V12TwoDog
 
         /// <summary>Directory scanned for gamepak DLLs. "gamepaks" matches the old host behaviour.</summary>
         public string GamepakDirectory { get; set; } = "gamepaks";
+
+        /// <summary>
+        /// Optional <c>.v12pak</c> archive to load at startup, mirroring the
+        /// MonoGame/Rockstar sibling-pak behaviour. The generic Godot host sets
+        /// this to the executable's sibling pak.
+        /// </summary>
+        public string? PakPath { get; set; }
 
         /// <summary>
         /// Assemblies to scan for gamepaks via direct project reference (no DLL
@@ -127,6 +137,8 @@ namespace V12TwoDog
         private LaserVisual? _laserVisual;
         private WorldCanvasSystem? _worldCanvas;
         private V12.Core.UI.Paper.ProwlPaperRenderer? _paperRenderer;
+        private SubViewport? _gameViewSub;
+        private long _gameViewViewportId;
         private CanvasLayer? _paperLayer;
         private Control? _paperRootControl;
         private V12TwoDog.Paper.GodotPaperCanvasRenderer? _godotPaperRenderer;
@@ -141,6 +153,7 @@ namespace V12TwoDog
         private long _lastFrameApplyTicks;
         private long _lastFrameAgeTicks;
         private FrameSnapshot? _latestFrame;
+        private V12PakLoadResult? _loadedPakArchive;
         private Thread? _v12Thread;
         private CancellationTokenSource? _cts;
         private bool _debugMode;
@@ -245,6 +258,44 @@ namespace V12TwoDog
             // applies the first real evaluation.
             _defaultEnv = new DefaultEnvironment(host);
 
+            // Godot hosts live in a plugin AssemblyLoadContext. Pak DLLs loaded
+            // with Assembly.LoadFrom would land in the default context and keep
+            // a second V12 identity, so the pak's IV12Gamepack would not match.
+            // Point both pak loaders at this runtime's own context instead.
+            var rendererLoadContext = AssemblyLoadContext.GetLoadContext(typeof(V12Runtime).Assembly);
+            if (rendererLoadContext != null)
+            {
+                GamepackLoader.AssemblyLoader = path => rendererLoadContext.LoadFromAssemblyPath(path);
+                GamepackLoader.AssemblyFinder = name => rendererLoadContext.Assemblies
+                    .FirstOrDefault(a => string.Equals(a.GetName().Name, name, StringComparison.OrdinalIgnoreCase));
+                V12PakLoader.AssemblyLoader = path => rendererLoadContext.LoadFromAssemblyPath(path);
+                V12PakLoader.AssemblyFinder = name => rendererLoadContext.Assemblies
+                    .FirstOrDefault(a => string.Equals(a.GetName().Name, name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            // ── Sibling .v12pak (the archive layout vcsdk ships) ──
+            bool pakArchiveLoaded = false;
+            if (!string.IsNullOrWhiteSpace(_options.PakPath) && File.Exists(_options.PakPath))
+            {
+                GD.Print($"[V12Runtime] Launching sibling pak '{Path.GetFileName(_options.PakPath)}'...");
+                try
+                {
+                    _loadedPakArchive = Root.LoadPak(_options.PakPath, new V12PakOptions
+                    {
+                        LoadDlls = true,
+                        LoadContractScripts = true,
+                        LoadCSharpScripts = true,
+                    });
+                    pakArchiveLoaded = true;
+                    if (_loadedPakArchive.LoadedWorlds.Count > 0)
+                        Root.SelectWorld(_loadedPakArchive.LoadedWorlds[0]);
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[V12Runtime] Failed to load '{_options.PakPath}': {ex.Message}");
+                }
+            }
+
             // ── Discover game paks ──
             Root.LoadGamepacks(_options.GamepakDirectory);
 
@@ -319,7 +370,7 @@ namespace V12TwoDog
                     GD.PrintErr($"[V12Runtime] --gamepak '{gamepakName}' not found in gamepaks/.");
                 }
             }
-            else if (Root.Gamepaks.Gamepaks.Count > 0 && _options.ShowLauncher)
+            else if (!pakArchiveLoaded && Root.Gamepaks.Gamepaks.Count > 0 && _options.ShowLauncher)
             {
                 GamepakMode = true;
                 _launcher = new GamepakLauncher(Root, Root.Gamepaks);
@@ -333,7 +384,7 @@ namespace V12TwoDog
                 GD.Print($"[V12Runtime] {Root.Gamepaks.Gamepaks.Count} game pak(s) found. Launcher shown.");
             }
 
-            if (!GamepakMode)
+            if (!GamepakMode && !pakArchiveLoaded)
             {
                 if (_options.CreateEmptyWorldIfNoPak)
                 {
@@ -401,6 +452,16 @@ namespace V12TwoDog
             }
 
             Root.Initialize();
+
+            // The archive's gamepaks were added by LoadPak before Initialize;
+            // start them now that platform services are ready.
+            if (pakArchiveLoaded && !GamepakMode)
+            {
+                Root.Gamepaks.InitializeAll();
+                Root.Gamepaks.StartAll();
+                GamepakMode = true;
+                AfterGamepakStart();
+            }
 
             // Server mode: start listening immediately so clients can join the
             // headless server. Client mode stays idle until the game UI (or an
@@ -648,8 +709,64 @@ namespace V12TwoDog
             // (the ~2 Hz poll in ProcessPhysics keeps it correct after that).
             _defaultEnv?.Ensure(Root);
 
+            // A pak that hosts a game-view panel (the studio editor) exposes a
+            // RenderWorld viewport element. Register a SubViewport for it so the
+            // Paper UI can draw the real 3D texture instead of a placeholder.
+            EnsureGameViewHost();
+
             if (RemotePlayerManager != null)
                 RemotePlayerManager.LocalWorldName = Root.SelectedWorld?.WorldName ?? "";
+        }
+
+        /// <summary>
+        /// Bind a <see cref="SubViewport"/> to whichever world element carries a
+        /// <c>ViewportComponent { RenderWorld = true }</c>, register it with the
+        /// renderer, and expose its texture to the Paper UI. This is the generic
+        /// seam that lets any pak (e.g. the studio editor) show the 3D scene in
+        /// its own game-view panel without the renderer hardcoding the studio.
+        /// </summary>
+        private void EnsureGameViewHost()
+        {
+            if (_paperRenderer == null || RendererService is not global::V12TwoDog.Renderer renderer)
+                return;
+
+            var worldElement = Root.FindElement(e => e.GetComponent<V12.Components.UI.ViewportComponent>() is { RenderWorld: true });
+            if (worldElement == null) return;
+            long id = worldElement.Id;
+            if (_gameViewSub != null && _gameViewViewportId == id) return;
+
+            if (_gameViewSub != null && GodotObject.IsInstanceValid(_gameViewSub))
+            {
+                renderer.UnregisterSceneViewport(_gameViewViewportId);
+                _gameViewSub.QueueFree();
+            }
+
+            var sub = new SubViewport
+            {
+                Name = "GameViewSubViewport",
+                TransparentBg = false,
+                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+                OwnWorld3D = false,
+                HandleInputLocally = false,
+            };
+            _host.AddChild(sub);
+            renderer.RegisterSceneViewport(id, sub);
+            _gameViewSub = sub;
+            _gameViewViewportId = id;
+
+            _paperRenderer.ViewportTextureProvider = requested =>
+                requested == id && GodotObject.IsInstanceValid(sub) ? sub.GetTexture() : null;
+            _paperRenderer.ViewportRectSink = (requested, rect) =>
+            {
+                if (requested != id || !GodotObject.IsInstanceValid(sub)) return;
+                int w = Math.Max(1, (int)rect.Size.X);
+                int h = Math.Max(1, (int)rect.Size.Y);
+                if (w > 1 && h > 1 && (w != sub.Size.X || h != sub.Size.Y))
+                    sub.Size = new Vector2I(w, h);
+            };
+
+            Root.MarkRenderDirty();
+            GD.Print($"[V12Runtime] Game-view SubViewport registered for element {id}");
         }
 
         /// <summary>
@@ -710,6 +827,8 @@ namespace V12TwoDog
             _cts?.Cancel();
             _v12Thread?.Join(1000);
 
+            try { _loadedPakArchive?.Dispose(); } catch { }
+            _loadedPakArchive = null;
             try { Root.Shutdown(); } catch { }
         }
 

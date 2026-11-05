@@ -9,6 +9,7 @@
 	<ItemGroup>
 	<ProjectReference Include="$(V12BasicProject)" />
 	  <ProjectReference Include="$(V12EngineProject)" />
+	  <ProjectReference Include="$(V12PakProject)" />
 	</ItemGroup>
 
 </Project>

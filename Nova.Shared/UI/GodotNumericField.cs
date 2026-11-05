@@ -9,7 +9,7 @@ namespace V12TwoDog.Godot.UI
     /// Alt+drag-to-scrub. Fires <see cref="SetOnChanged"/> only when the parsed
     /// value actually changes.
     /// </summary>
-    public partial class GodotNumericField : INumericField
+    public partial class GodotNumericField : IScrubbableNumericField
     {
         private sealed partial class NumericEdit : LineEdit
         {
@@ -24,7 +24,7 @@ namespace V12TwoDog.Godot.UI
                 if (@event is InputEventMouseButton mb
                     && mb.ButtonIndex == MouseButton.Left
                     && mb.Pressed
-                    && mb.AltPressed)
+                    && (mb.AltPressed || mb.CtrlPressed))
                 {
                     _scrubbing = true;
                     _scrubStart = ScrubValue;
@@ -68,7 +68,15 @@ namespace V12TwoDog.Godot.UI
             _edit = new NumericEdit();
             _edit.TextSubmitted += _ => OnCommitted();
             _edit.FocusExited += OnCommitted;
-            _edit.OnScrub = value => Commit(value);
+            _edit.OnScrub = value => Commit(ApplySnap(value));
+        }
+
+        /// <summary>Control-held scrubs land on SnapStep increments (e.g. 1 m
+        /// for a position axis); typed commits are left alone.</summary>
+        private float ApplySnap(float value)
+        {
+            if (SnapStep <= 0f || !Input.IsKeyPressed(Key.Ctrl)) return value;
+            return MathF.Round(value / SnapStep) * SnapStep;
         }
 
         public float Value
@@ -92,6 +100,10 @@ namespace V12TwoDog.Godot.UI
             get => _edit.Editable;
             set => _edit.Editable = value;
         }
+
+        public string ScrubLabel { get; set; } = "";
+        public float SnapStep { get; set; }
+        public bool RendersScrubLabel => false;
 
         public object NativeControl => _edit;
 

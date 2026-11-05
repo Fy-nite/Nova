@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using V12;
 
 /// <summary>
@@ -38,6 +39,7 @@ public partial class RootLoop : Node3D
             // 2dog hosts) fall back to the Sample Game so they still get a scene.
             GamepakAssemblies = explicitPaks.Count > 0 ? null : DiscoverHostGamepaks(),
             Gamepaks = explicitPaks.Count > 0 ? new List<IV12Gamepack>(explicitPaks) : null,
+            PakPath = explicitPaks.Count > 0 ? null : FindSiblingPak(),
             ShowLauncher = false,
             CreateEmptyWorldIfNoPak = false,
         };
@@ -81,6 +83,38 @@ public partial class RootLoop : Node3D
                     options.NetworkPort = port;
             }
         }
+    }
+
+    /// <summary>
+    /// Find a <c>&lt;exe&gt;.v12pak</c> next to the running executable, matching
+    /// the MonoGame/Rockstar hosts so vcsdk's renderer + pak deployment works.
+    /// </summary>
+    private static string? FindSiblingPak()
+    {
+        var exePath = System.Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exePath) ||
+            string.Equals(Path.GetFileNameWithoutExtension(exePath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            exePath = System.Reflection.Assembly.GetEntryAssembly()?.Location;
+        }
+
+        var directory = !string.IsNullOrEmpty(exePath)
+            ? Path.GetDirectoryName(exePath)
+            : System.AppContext.BaseDirectory;
+        if (string.IsNullOrEmpty(directory)) return null;
+
+        var exeName = exePath != null ? Path.GetFileNameWithoutExtension(exePath) : null;
+        if (string.IsNullOrEmpty(exeName)) return null;
+
+        var exact = Path.Combine(directory, exeName + ".v12pak");
+        if (File.Exists(exact)) return exact;
+
+        foreach (var candidate in Directory.EnumerateFiles(directory, "*.v12pak", SearchOption.TopDirectoryOnly))
+        {
+            if (string.Equals(Path.GetFileNameWithoutExtension(candidate), exeName, StringComparison.OrdinalIgnoreCase))
+                return candidate;
+        }
+        return null;
     }
 
     /// <summary>

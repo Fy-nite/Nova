@@ -1259,7 +1259,7 @@ namespace V12TwoDog.Paper
             }
         }
 
-        private sealed class ProwlNumericField : ProwlWidget, INumericField
+        private sealed class ProwlNumericField : ProwlWidget, IScrubbableNumericField
         {
             private readonly Control _dummy = new();
             private Action<float>? _cb;
@@ -1268,14 +1268,52 @@ namespace V12TwoDog.Paper
             public float Value { get; set; }
             public string Format { get; set; }
             public bool Enabled { get; set; } = true;
+            public string ScrubLabel { get; set; } = "";
+            public float SnapStep { get; set; }
+            public bool RendersScrubLabel => !string.IsNullOrEmpty(ScrubLabel);
             public void SetOnChanged(Action<float> cb) => _cb = cb;
 
             public override void Emit(PPaper paper)
             {
-                var el = Leaf(paper, "numfield").Height(22f)
-                    .BackgroundColor(PanelBgAlt)
-                    .Padding(5).BorderWidth(1f).BorderColor(Border);
-                Text(el, Value.ToString(Format), 14f, TextCol);
+                // Origami's numeric field gives us text entry (with arithmetic),
+                // step buttons off by default, and an axis label we can make the
+                // drag-to-scrub handle. Control-held drags snap to SnapStep.
+                var field = global::Prowl.OrigamiUI.Origami
+                    .NumericField(paper, $"{Id}_num", Value, v => Commit(paper, v))
+                    .Format(Format)
+                    .Height(24f)
+                    .ReadOnly(!Enabled)
+                    .SelectAllOnFocus();
+
+                if (RendersScrubLabel)
+                {
+                    field.DraggableLabel(
+                        ScrubLabel,
+                        ToDrawing(TextCol),
+                        DragDecimalPlaces(),
+                        compact: true);
+                }
+
+                field.Show();
+            }
+
+            private int DragDecimalPlaces() => Format switch
+            {
+                "F0" => 0,
+                "F1" => 1,
+                _ => 2,
+            };
+
+            private void Commit(PPaper paper, float value)
+            {
+                if (SnapStep > 0f
+                    && (paper.IsKeyDown(global::Prowl.PaperUI.PaperKey.LeftControl)
+                        || paper.IsKeyDown(global::Prowl.PaperUI.PaperKey.RightControl)))
+                {
+                    value = MathF.Round(value / SnapStep) * SnapStep;
+                }
+                Value = value;
+                _cb?.Invoke(value);
             }
         }
 

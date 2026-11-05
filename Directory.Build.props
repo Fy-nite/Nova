@@ -16,6 +16,9 @@
     <V12BasicProject Condition="'$(V12BasicProject)' == ''">$(MSBuildThisFileDirectory)libs/V12.Basic/V12.Basic.csproj</V12BasicProject>
     <V12EngineProject Condition="'$(V12EngineProject)' == ''">$(MSBuildThisFileDirectory)libs/V12.Basic/libs/V12/V12.csproj</V12EngineProject>
     <V12BindingsProject Condition="'$(V12BindingsProject)' == ''">$(MSBuildThisFileDirectory)libs/V12.Basic/libs/V12.Bindings/V12.Bindings.csproj</V12BindingsProject>
+    <!-- V12.Pak lives next to Nova in the V12Studio checkout; a monorepo build
+         overrides this from its root props. -->
+    <V12PakProject Condition="'$(V12PakProject)' == '' and Exists('$(MSBuildThisFileDirectory)../V12-sdk/libs/V12.pak/V12.Pak.csproj')">$(MSBuildThisFileDirectory)../V12-sdk/libs/V12.pak/V12.Pak.csproj</V12PakProject>
   </PropertyGroup>
 
 </Project>
