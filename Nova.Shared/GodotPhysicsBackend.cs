@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Godot;
+using V12.Core.Diagnostics;
 using V12.Core.Interfaces.Physics;
 using V12.Components;
 using NumVec3 = System.Numerics.Vector3;
@@ -18,6 +19,12 @@ namespace V12TwoDog
         private readonly Dictionary<Rid, long> _ridToBody = new();
         private long _nextId;
 
+        /// <summary>Fallback priority; Bepu (or another registered backend) can outrank it.</summary>
+        public int Priority => 0;
+        public bool AutoStep { get; set; }
+        /// <summary>Stored for parity with IPhysicsBackend; Godot's global gravity comes from the project settings.</summary>
+        public System.Numerics.Vector3 Gravity { get; set; } = new(0f, -9.81f, 0f);
+
         public GodotPhysicsBackend(Node rootNode)
         {
             _server = PhysicsServer3D.Singleton;
@@ -33,7 +40,8 @@ namespace V12TwoDog
             var body = new GodotPhysicsBody(id, descCopy)
             {
                 GravityScale = descCopy.GravityScale,
-                IsDynamic = !descCopy.IsKinematic
+                IsDynamic = descCopy.Type == PhysicsBodyType.Dynamic,
+                LockRotation = descCopy.LockRotation || descCopy.IsCharacterController
             };
 
             GodotMainThread.Execute(() =>
@@ -73,6 +81,17 @@ namespace V12TwoDog
 
                 var mode = descCopy.IsKinematic ? PhysicsServer3D.BodyMode.Static : PhysicsServer3D.BodyMode.Rigid;
                 _server.BodySetMode(bodyRid, mode);
+
+                if (descCopy.Type == PhysicsBodyType.Dynamic)
+                {
+                    if (descCopy.Mass > 0f)
+                        _server.BodySetParam(bodyRid, PhysicsServer3D.BodyParameter.Mass, descCopy.Mass);
+                    _server.BodySetParam(bodyRid, PhysicsServer3D.BodyParameter.GravityScale, descCopy.GravityScale);
+                    if (descCopy.LinearDamping > 0f)
+                        _server.BodySetParam(bodyRid, PhysicsServer3D.BodyParameter.LinearDamp, descCopy.LinearDamping);
+                    if (descCopy.AngularDamping > 0f)
+                        _server.BodySetParam(bodyRid, PhysicsServer3D.BodyParameter.AngularDamp, descCopy.AngularDamping);
+                }
 
                 var shapeRid = CreateShapeRid(descCopy.Shape, descCopy.Size);
                 _server.BodyAddShape(bodyRid, shapeRid, Transform3D.Identity, disabled: false);
@@ -120,6 +139,7 @@ namespace V12TwoDog
 
         public bool Raycast(in Ray ray, out RaycastHit hit)
         {
+            using var _zone = V12Profiler.BeginZone("GodotPhysicsBackend.Raycast", V12Profiler.Colors.World);
             hit = default;
             var rayCopy = ray;
             bool result = false;
@@ -193,6 +213,13 @@ namespace V12TwoDog
 
         public void Step(float deltaTime)
         {
+            // Orientation lock for dynamic bodies. Character bodies are upright by
+            // construction and are driven through LinearVelocity elsewhere.
+            foreach (var body in _bodies.Values)
+            {
+                if (body.LockRotation && body.CharNode == null)
+                    body.AngularVelocity = NumVec3.Zero;
+            }
         }
 
         /// <summary>
@@ -280,6 +307,7 @@ namespace V12TwoDog
 
         public void SyncBodies()
         {
+            using var _zone = V12Profiler.BeginZone("GodotPhysicsBackend.SyncBodies", V12Profiler.Colors.World);
             foreach (var body in _bodies.Values)
                 body.Sync();
         }
@@ -291,6 +319,7 @@ namespace V12TwoDog
         /// </summary>
         public void ReadbackAll()
         {
+            using var _zone = V12Profiler.BeginZone("GodotPhysicsBackend.ReadbackAll", V12Profiler.Colors.World);
             foreach (var body in _bodies.Values)
                 body.ReadbackFromGodot();
         }
@@ -305,6 +334,7 @@ namespace V12TwoDog
         /// </summary>
         public void StepCharacterControllers(float deltaTime)
         {
+            using var _zone = V12Profiler.BeginZone("GodotPhysicsBackend.StepCharacterControllers", V12Profiler.Colors.World);
             foreach (var body in _bodies.Values)
             {
                 var charNode = body.CharNode;
@@ -376,12 +406,15 @@ namespace V12TwoDog
         public bool IsCharacterController => CharNode != null;
         public bool IsOnFloor => _isOnFloor;
         internal bool _isOnFloor;
+        public bool LockRotation { get; set; }
 
         // Local caches — read/written from worker thread, synced to Godot on main thread
         internal volatile bool _syncPending = true;
         internal NumVec3 _cachedPosition;
         private NumQuat _cachedRotation;
         private NumVec3 _cachedVelocity;
+        private NumVec3 _cachedAngularVelocity;
+        private bool _angularDirty;
 
         public GodotPhysicsBody(long id, PhysicsBodyDesc desc)
         {
@@ -425,12 +458,33 @@ namespace V12TwoDog
             }
         }
 
+        public NumVec3 AngularVelocity
+        {
+            get => _cachedAngularVelocity;
+            set
+            {
+                _cachedAngularVelocity = value;
+                _angularDirty = true;
+                if (CharNode == null)
+                    EnqueueSync();
+            }
+        }
+
         public void AddForce(NumVec3 force)
         {
             GodotMainThread.Execute(() =>
             {
                 if (!BodyRid.IsValid) return;
                 _server.BodyApplyImpulse(BodyRid, new Vector3(force.X, force.Y, force.Z), null);
+            });
+        }
+
+        public void AddTorque(NumVec3 torque)
+        {
+            GodotMainThread.Execute(() =>
+            {
+                if (!BodyRid.IsValid) return;
+                _server.BodyApplyTorqueImpulse(BodyRid, new Vector3(torque.X, torque.Y, torque.Z));
             });
         }
 
@@ -484,6 +538,13 @@ namespace V12TwoDog
 
             _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity, vel);
 
+            if (_angularDirty)
+            {
+                _server.BodySetState(BodyRid, PhysicsServer3D.BodyState.AngularVelocity,
+                    new Vector3(_cachedAngularVelocity.X, _cachedAngularVelocity.Y, _cachedAngularVelocity.Z));
+                _angularDirty = false;
+            }
+
             if (!IsDynamic)
             {
                 var xform = (Transform3D)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.Transform);
@@ -519,6 +580,8 @@ namespace V12TwoDog
             }
             var vel = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.LinearVelocity);
             _cachedVelocity = new NumVec3(vel.X, vel.Y, vel.Z);
+            var ang = (Vector3)_server.BodyGetState(BodyRid, PhysicsServer3D.BodyState.AngularVelocity);
+            _cachedAngularVelocity = new NumVec3(ang.X, ang.Y, ang.Z);
         }
     }
 }

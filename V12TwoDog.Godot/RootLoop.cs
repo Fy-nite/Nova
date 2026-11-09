@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using V12;
+using V12.Core.Diagnostics;
 
 /// <summary>
 /// Thin scene adapter bound to <c>res://RootLoop.cs</c> by <c>main.tscn</c>.
@@ -20,11 +21,13 @@ public partial class RootLoop : Node3D
 
     public override void _Input(Godot.InputEvent @event)
     {
+        using var _zone = V12Profiler.BeginZone("RootLoop._Input", V12Profiler.Colors.Runtime);
         _runtime?.HandleInputEvent(@event);
     }
 
     public override void _Ready()
     {
+        using var _zone = V12Profiler.BeginZone("RootLoop._Ready", V12Profiler.Colors.Engine);
         // A game pak registered by the embedding host (V12Host.RegisterGamePak)
         // wins over discovery: run it directly so it isn't also auto-discovered
         // from the host's referenced assemblies (which would double-load it).
@@ -176,6 +179,7 @@ public partial class RootLoop : Node3D
 
     public override void _PhysicsProcess(double delta)
     {
+        using var _zone = V12Profiler.BeginZone("RootLoop._PhysicsProcess", V12Profiler.Colors.Engine);
         _runtime?.ProcessPhysics((float)delta);
     }
 

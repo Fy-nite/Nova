@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using V12;
 using V12.Core;
+using V12.Core.Diagnostics;
 using V12.Core.GamePak;
 using V12.Core.Input;
 using V12.Core.Interfaces;
@@ -21,6 +22,7 @@ using V12.Rendering;
 using V12.UI;
 using V12TwoDog.Godot.Rendering;
 using V12TwoDog.Godot.UI;
+using IRenderer = V12.Core.Interfaces.IRenderer;
 
 namespace V12TwoDog
 {
@@ -120,7 +122,7 @@ namespace V12TwoDog
         // Assigned in the constructor. (The compiler's flow analysis loses track of
         // interface-typed auto-properties here, hence the null-forgiving markers.)
         public IRenderer RendererService { get; } = null!;
-        public GodotAudioPlayer AudioPlayer { get; }        public XRTrackingService? XR { get; private set; }
+        public XRTrackingService? XR { get; private set; }
         public bool XrAvailable => XR?.IsAvailable == true;
         public InputHandler? InputHandler { get; private set; }
         public NetworkHandler? NetworkHandler { get; private set; }
@@ -137,12 +139,11 @@ namespace V12TwoDog
         private LaserVisual? _laserVisual;
         private WorldCanvasSystem? _worldCanvas;
         private V12.Core.UI.Paper.ProwlPaperRenderer? _paperRenderer;
-        private SubViewport? _gameViewSub;
-        private long _gameViewViewportId;
+        private V12TwoDog.Paper.GodotViewportSurfaceProvider? _viewportSurfaces;
         private CanvasLayer? _paperLayer;
         private Control? _paperRootControl;
         private V12TwoDog.Paper.GodotPaperCanvasRenderer? _godotPaperRenderer;
-        private DefaultEnvironment? _defaultEnv;
+
         private GamepakLauncher? _launcher;
         private PickupSystem? _pickup;
 
@@ -159,8 +160,17 @@ namespace V12TwoDog
         private bool _debugMode;
         private bool _disposed;
 
+        // ── Paper UI thread (Quill/Paper/Origami layout off the physics thread) ──
+        private Thread? _paperThread;
+        private CancellationTokenSource? _paperCts;
+        private readonly ConcurrentQueue<global::Godot.InputEvent> _paperInputQueue = new();
+        private Vector2 _pendingPaperViewportSize = new Vector2(1280, 720);
+        private readonly AutoResetEvent _paperWake = new(false);
+
         private V12Runtime(Node3D host, V12RuntimeOptions options)
         {
+            using var _zone = V12Profiler.BeginZone("V12Runtime.ctor", V12Profiler.Colors.Engine);
+            V12Profiler.SetThreadName("Godot Main");
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _options = options ?? new V12RuntimeOptions();
 
@@ -176,10 +186,6 @@ namespace V12TwoDog
             Root = new GameRoot();
             var renderer = new global::V12TwoDog.Renderer(host.GetTree());
             RendererService = renderer;
-            AudioPlayer = new GodotAudioPlayer();
-            AudioPlayer.Initialize(Root);
-            Root.Registry.Register("IAudioPlayer", AudioPlayer);
-            host.AddChild(AudioPlayer);
             Root.Registry.Register("IRenderer", RendererService);
 
             // WorldCanvasSystem handles both world-space (3D quads) and screen-space (CanvasLayer Controls).
@@ -214,6 +220,10 @@ namespace V12TwoDog
                     host.CallDeferred(Node.MethodName.AddChild, _paperLayer);
                     _godotPaperRenderer = new V12TwoDog.Paper.GodotPaperCanvasRenderer(_paperLayer, _paperRootControl);
                     _paperRenderer = new V12.Core.UI.Paper.ProwlPaperRenderer(_godotPaperRenderer, (int)vpSize.X, (int)vpSize.Y, 1f);
+                    _viewportSurfaces = new V12TwoDog.Paper.GodotViewportSurfaceProvider(_host, renderer);
+                    _paperRenderer.ViewportTextureProvider = _viewportSurfaces.GetTexture;
+                    _paperRenderer.ViewportRectSink = _viewportSurfaces.SetRect;
+                    _paperRenderer.ViewportReleaseSink = _viewportSurfaces.Release;
                     Root.Registry.RegisterOrReplace("IUIRenderer", _paperRenderer);
                     GD.Print($"[V12Runtime] Paper/Origami/Quill IUIRenderer active (mesh bridge, {vpSize.X}x{vpSize.Y}) - Godot Control fallback kept");
                 }
@@ -253,10 +263,7 @@ namespace V12TwoDog
             _physics = new GodotPhysicsBackend(host);
             Root.Registry.Register(nameof(V12.Core.Interfaces.Physics.IPhysicsBackend), _physics);
 
-            // Baked-in scene environment (sky/ambient + default sun until the
-            // game provides its own lights). Worlds load below; AfterGamepakStart
-            // applies the first real evaluation.
-            _defaultEnv = new DefaultEnvironment(host);
+
 
             // Godot hosts live in a plugin AssemblyLoadContext. Pak DLLs loaded
             // with Assembly.LoadFrom would land in the default context and keep
@@ -485,6 +492,30 @@ namespace V12TwoDog
                 IsBackground = true
             };
             _v12Thread.Start();
+
+            // ── Start Paper UI thread (layout + Quill tessellation) ──
+            // Paper/Origami/Quill no longer runs inside ProcessPhysics.
+            // The UI thread owns the Paper instance exclusively and produces
+            // PaperFrames at ~60 Hz; the actual Godot mesh upload is deferred
+            // to the main thread via GodotMainThread (see GodotPaperCanvasRenderer).
+            if (V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper && _paperRenderer != null && _godotPaperRenderer != null)
+            {
+                _paperCts = new CancellationTokenSource();
+                var paperToken = _paperCts.Token;
+                _paperThread = new Thread(() => PaperUIThreadLoop(paperToken))
+                {
+                    Name = "V12PaperUI",
+                    IsBackground = true
+                };
+                _paperThread.Start();
+                // Seed viewport size so the first UI frame has correct dimensions
+                try
+                {
+                    var vp = _host.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1280, 720);
+                    if (vp.X >= 64) _pendingPaperViewportSize = vp;
+                }
+                catch { }
+            }
         }
 
         /// <summary>
@@ -501,12 +532,19 @@ namespace V12TwoDog
         /// </summary>
         public void HandleInputEvent(global::Godot.InputEvent @event)
         {
+            using var _zone = V12Profiler.BeginZone("V12Runtime.HandleInputEvent", V12Profiler.Colors.Runtime);
+            if (_disposed) return;
             if (@event is global::Godot.InputEventMouseMotion motion)
                 InputHandler?.AccumulateMouseLook(motion.Relative);
 
-            // Feed the engine-level Paper canvas (screen-space CanvasComponent HUD).
-            if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
-                V12TwoDog.Paper.PaperInput.Feed(_paperRenderer.PaperInstance, @event);
+            // Paper input is now consumed on the dedicated Paper UI thread so
+            // HandleInputEvent never contends on the Paper instance. Enqueue and
+            // wake the UI thread — it drains the queue before each BeginFrame.
+            if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper && @event != null)
+            {
+                _paperInputQueue.Enqueue(@event);
+                try { _paperWake.Set(); } catch (ObjectDisposedException) { }
+            }
         }
 
         private void SetMouseCaptured(bool captured)
@@ -541,6 +579,7 @@ namespace V12TwoDog
 
         private void V12WorkerLoop(CancellationToken ct)
         {
+            V12Profiler.SetThreadName("V12 Worker");
             var sw = System.Diagnostics.Stopwatch.StartNew();
             while (!ct.IsCancellationRequested)
             {
@@ -548,10 +587,13 @@ namespace V12TwoDog
                 sw.Restart();
                 dt = Math.Clamp(dt, 0.001f, 0.05f);
 
+                using var _workerFrame = V12Profiler.BeginZone("V12WorkerLoop.Tick", V12Profiler.Colors.World);
                 try
                 {
-                    NetworkHandler?.ProcessPendingNetworkMessages();
-                    Root.Update(dt);
+                    using (V12Profiler.BeginZone("ProcessPendingNetworkMessages", V12Profiler.Colors.Runtime))
+                        NetworkHandler?.ProcessPendingNetworkMessages();
+                    using (V12Profiler.BeginZone("Root.Update", V12Profiler.Colors.World))
+                        Root.Update(dt);
 
                     // Only capture a fresh frame when something render-affecting
                     // changed since the last capture (transform, mesh, material,
@@ -562,19 +604,84 @@ namespace V12TwoDog
                     if (Root.ConsumeRenderDirty())
                     {
                         var capture = System.Diagnostics.Stopwatch.StartNew();
-                        var frame = Root.CaptureFrame();
+                        FrameSnapshot frame;
+                        using (V12Profiler.BeginZone("CaptureFrame", V12Profiler.Colors.Capture))
+                            frame = Root.CaptureFrame();
                         Interlocked.Exchange(ref _lastFrameCaptureTicks, capture.ElapsedTicks);
                         _frameQueue.Enqueue((frame, System.Diagnostics.Stopwatch.GetTimestamp()));
                         Interlocked.Increment(ref _pendingFrameCount);
                     }
+                    V12Profiler.Plot("V12 PendingFrames", _frameQueue.Count);
+                    V12Profiler.Plot("V12 Worker dt (ms)", dt * 1000.0);
                 }
                 catch (Exception ex)
                 {
                     GD.Print($"[V12Worker] {ex.GetType().Name}: {ex.Message}");
                 }
 
-                int sleepMs = Math.Max(1, (int)((1f / 60f - dt) * 1000));
-                Thread.Sleep(sleepMs);
+                // int sleepMs = Math.Max(1, (int)((1f / 60f - dt) * 1000));
+                // Thread.Sleep(sleepMs);
+            }
+        }
+
+        private void PaperUIThreadLoop(CancellationToken ct)
+        {
+            V12Profiler.SetThreadName("V12 Paper UI");
+            while (!ct.IsCancellationRequested)
+            {
+                using var _frameZone = V12Profiler.BeginZone("PaperUI.ThreadTick", V12Profiler.Colors.Runtime);
+                try
+                {
+                    // Drain Godot input events queued from HandleInputEvent (main thread).
+                    int drained = 0;
+                    while (_paperInputQueue.TryDequeue(out var evt))
+                    {
+                        drained++;
+                        try
+                        {
+                            if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
+                                V12TwoDog.Paper.PaperInput.Feed(_paperRenderer.PaperInstance, evt);
+                        }
+                        catch (Exception ex)
+                        {
+                            GD.PrintErr($"[PaperUI] Feed failed: {ex.Message}");
+                        }
+                    }
+                    if (drained > 0)
+                        V12Profiler.Plot("Paper Input Queued", _paperInputQueue.Count);
+
+                    if (_paperRenderer != null && _godotPaperRenderer != null
+                        && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper
+                        && !_disposed)
+                    {
+                        // Viewport size is sampled on the main thread and published here.
+                        Vector2 vp = _pendingPaperViewportSize;
+                        if (vp.X < 64) vp = new Vector2(1280, 720);
+
+                        // Resize is cheap; keep the Paper canvas in sync.
+                        _paperRenderer.Resize((int)vp.X, (int)vp.Y, 1f);
+
+                        V12.Core.Rendering.UIFrame frame;
+                        using (V12Profiler.BeginZone("PaperUI.CaptureUI", V12Profiler.Colors.Runtime))
+                            frame = Root.CaptureUI();
+
+                        using (V12Profiler.BeginZone("PaperUI.ApplyUI", V12Profiler.Colors.Runtime))
+                            _paperRenderer.ApplyUI(frame);
+
+                        using (V12Profiler.BeginZone("PaperUI.step", V12Profiler.Colors.Runtime))
+                            _paperRenderer.step(); // off-main: headless capture + deferred Godot upload via GodotMainThread
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[PaperUI] tick failed: {ex.Message}");
+                }
+
+                // ~60 Hz, but wake immediately on new input or viewport change.
+                // try { _paperWake.WaitOne(30); } catch { }
+                Thread.Sleep(16);
+                if (ct.IsCancellationRequested) break;
+
             }
         }
 
@@ -585,9 +692,11 @@ namespace V12TwoDog
         /// </summary>
         public void ProcessPhysics(float delta)
         {
+            using var _zone = V12Profiler.BeginZone("V12Runtime.ProcessPhysics", V12Profiler.Colors.Engine);
             if (_disposed) return;
 
-            XR?.Update();
+            using (V12Profiler.BeginZone("XR.Update", V12Profiler.Colors.Runtime))
+                XR?.Update();
 
             // ── Sync mouse capture with renderer option ──
             if (XrAvailable != true && RendererService?.LockMouse == true && !(InputHandler?.MouseCaptured ?? false))
@@ -596,93 +705,113 @@ namespace V12TwoDog
                 SetMouseCaptured(false);
 
             // ── Input ──
-            var inputService = Root.Registry.Get<V12.Core.Input.InputService>();
-            if (_options.EnableInput && inputService != null && InputHandler?.ProcessFrame(inputService, XrAvailable, Root) == true)
+            using (V12Profiler.BeginZone("Input", V12Profiler.Colors.Runtime))
             {
-                if (XrAvailable != true)
+                var inputService = Root.Registry.Get<V12.Core.Input.InputService>();
+                if (_options.EnableInput && inputService != null && InputHandler?.ProcessFrame(inputService, XrAvailable, Root) == true)
                 {
-                    var newCaptured = !InputHandler.MouseCaptured;
-                    SetMouseCaptured(newCaptured);
-                    if (RendererService != null) RendererService.LockMouse = newCaptured;
+                    if (XrAvailable != true)
+                    {
+                        var newCaptured = !InputHandler.MouseCaptured;
+                        SetMouseCaptured(newCaptured);
+                        if (RendererService != null) RendererService.LockMouse = newCaptured;
+                    }
                 }
+                if (InputHandler != null) _debugMode = InputHandler.DebugMode;
             }
-            if (InputHandler != null) _debugMode = InputHandler.DebugMode;
 
             // ── Flush deferred Godot API calls from the V12 worker thread ──
-            GodotMainThread.FlushPending();
+            using (V12Profiler.BeginZone("FlushPending", V12Profiler.Colors.Runtime))
+                GodotMainThread.FlushPending();
+
+            // ── Apply queued viewport surface creates/resizes/releases ──
+            _viewportSurfaces?.Pump();
 
             // ── Advance character controllers (move_and_slide) on the main thread ──
-            _physics?.StepCharacterControllers(delta);
+            using (V12Profiler.BeginZone("Physics.StepCharacterControllers", V12Profiler.Colors.World))
+                _physics?.StepCharacterControllers(delta);
 
             // ── Read physics results back after Godot's physics tick ──
-            _physics?.ReadbackAll();
+            using (V12Profiler.BeginZone("Physics.ReadbackAll", V12Profiler.Colors.World))
+                _physics?.ReadbackAll();
 
             // ── Tween remote player positions BEFORE capturing the frame ──
-            RemotePlayerManager?.UpdateTweens(delta);
+            using (V12Profiler.BeginZone("RemotePlayerManager.UpdateTweens", V12Profiler.Colors.Runtime))
+                RemotePlayerManager?.UpdateTweens(delta);
 
             // ── Consume queued frames in order on the main thread ──
             long oldestAgeTicks = 0;
             bool receivedFrame = false;
-            while (_frameQueue.TryDequeue(out var queued))
+            using (V12Profiler.BeginZone("ConsumeFrameQueue", V12Profiler.Colors.Capture))
             {
-                Interlocked.Decrement(ref _pendingFrameCount);
-                if (!receivedFrame)
-                    oldestAgeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - queued.Timestamp;
-                receivedFrame = true;
-                _latestFrame = queued.Frame;
+                while (_frameQueue.TryDequeue(out var queued))
+                {
+                    Interlocked.Decrement(ref _pendingFrameCount);
+                    if (!receivedFrame)
+                        oldestAgeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - queued.Timestamp;
+                    receivedFrame = true;
+                    _latestFrame = queued.Frame;
+                }
+                if (receivedFrame)
+                    Interlocked.Exchange(ref _lastFrameAgeTicks, oldestAgeTicks);
             }
-            if (receivedFrame)
-                Interlocked.Exchange(ref _lastFrameAgeTicks, oldestAgeTicks);
 
             if (_latestFrame != null)
             {
                 var apply = System.Diagnostics.Stopwatch.StartNew();
-                RendererService!.ApplySnapshot(_latestFrame);
-                AudioPlayer.ApplySnapshot(_latestFrame);
+                using (V12Profiler.BeginZone("ApplySnapshot", V12Profiler.Colors.Renderer))
+                {
+                    RendererService!.ApplySnapshot(_latestFrame);
+                }
                 Interlocked.Exchange(ref _lastFrameApplyTicks, apply.ElapsedTicks);
             }
 
-            _debug?.Update(delta);
+            using (V12Profiler.BeginZone("DebugGameService.Update", V12Profiler.Colors.Runtime))
+                _debug?.Update(delta);
 
             // ── Network timers (sync, heartbeat, status logging) ──
-            NetworkHandler?.Update(delta, _debugMode);
+            using (V12Profiler.BeginZone("NetworkHandler.Update", V12Profiler.Colors.Runtime))
+                NetworkHandler?.Update(delta, _debugMode);
 
             // ── Laser visual ──
             // Pass the live right-hand source so the laser is drawn from the hand's
             // actual tracked position (zero-latency) instead of a stale snapshot ray.
-            if (_laserVisual != null && _pickup != null)
-                _laserVisual.Update(_pickup, XR?.RightHandSource);
+            using (V12Profiler.BeginZone("LaserVisual.Update", V12Profiler.Colors.Renderer))
+            {
+                if (_laserVisual != null && _pickup != null)
+                    _laserVisual.Update(_pickup, XR?.RightHandSource);
+            }
 
             // ── World/screen-space UI (CanvasComponent) ──
-            _worldCanvas?.Update(Root);
+            using (V12Profiler.BeginZone("WorldCanvasSystem.Update", V12Profiler.Colors.Runtime))
+                _worldCanvas?.Update(Root);
 
-            // ── Paper/Origami/Quill UI (engine-level default, Godot mesh bridge) ──
+            // ── Paper/Origami/Quill UI — now on its own thread ──
+            // Sample viewport size on the main thread (Godot API is main-thread only)
+            // and publish it for the Paper UI thread. The UI thread does
+            // CaptureUI -> ApplyUI -> step off the physics tick; its Godot mesh
+            // upload is deferred via GodotMainThread and flushed at the top of
+            // the next ProcessPhysics (so physics never blocks on Quill tessellation).
             if (_paperRenderer != null && V12.Core.UI.Paper.ProwlPaperRenderer.UseProwlPaper)
             {
-                try
+                using (V12Profiler.BeginZone("Paper.PublishViewport", V12Profiler.Colors.Runtime))
                 {
-                    var vp = _host.GetViewport().GetVisibleRect().Size;
-                    _paperRenderer.Resize((int)vp.X, (int)vp.Y, 1f);
-                    // Paper input: feed Godot pointer pos so OnClick hit-testing works.
-                    // HandleInputEvent already forwards InputService; for Paper we also sync the
-                    // Godot mouse pos directly (BeginFrame reads it via Paper's internal input).
-                    var mousePos = _host.GetViewport().GetMousePosition();
-                    // Paper's input is via its Canvas - we push via Godot Input forwarding:
-                    // ProwlPaperRenderer.BuildNode maps OnClick to ElementBuilder.OnClick which
-                    // Paper hit-tests using its internal pointer state. Feeding via InputService
-                    // is handled in HandleInputEvent; here we ensure viewport size stays current.
-                    var frame = Root.CaptureUI();
-                    _paperRenderer.ApplyUI(frame);
-                    _paperRenderer.step();
-                }
-                catch (Exception ex)
-                {
-                    GD.PrintErr($"[V12Runtime] Paper tick failed: {ex.Message}");
+                    try
+                    {
+                        var vp = _host.GetViewport()?.GetVisibleRect().Size ?? new Vector2(1280, 720);
+                        if (vp.X >= 64 && (vp.X != _pendingPaperViewportSize.X || vp.Y != _pendingPaperViewportSize.Y))
+                        {
+                            _pendingPaperViewportSize = vp;
+                            try { _paperWake.Set(); } catch { }
+                        }
+                    }
+                    catch { }
                 }
             }
 
-            // ── Default environment (sky/ambient/sun until the game defines them) ──
-            _defaultEnv?.Update(Root);
+
+            V12Profiler.Plot("V12 PendingFrames (main)", _frameQueue.Count);
+            V12Profiler.FrameMark();
         }
 
         /// <summary>
@@ -691,6 +820,7 @@ namespace V12TwoDog
         /// </summary>
         private void AfterGamepakStart()
         {
+            using var _zone = V12Profiler.BeginZone("V12Runtime.AfterGamepakStart", V12Profiler.Colors.Engine);
             var rootWidget = Root.Registry.Get<IWidget>("RootWidget");
             if (rootWidget?.NativeControl is Node node)
             {
@@ -705,9 +835,6 @@ namespace V12TwoDog
             _pickup = Root.Registry.Get<PickupSystem>();
             _pickup?.Initialize(Root);
 
-            // Worlds exist now — evaluate the default environment once up front
-            // (the ~2 Hz poll in ProcessPhysics keeps it correct after that).
-            _defaultEnv?.Ensure(Root);
 
             // A pak that hosts a game-view panel (the studio editor) exposes a
             // RenderWorld viewport element. Register a SubViewport for it so the
@@ -719,55 +846,26 @@ namespace V12TwoDog
         }
 
         /// <summary>
-        /// Bind a <see cref="SubViewport"/> to whichever world element carries a
-        /// <c>ViewportComponent { RenderWorld = true }</c>, register it with the
-        /// renderer, and expose its texture to the Paper UI. This is the generic
-        /// seam that lets any pak (e.g. the studio editor) show the 3D scene in
-        /// its own game-view panel without the renderer hardcoding the studio.
+        /// Pre-create the surface for the RenderWorld viewport so the editor host
+        /// can attach it to its game-view tab before the first Paper frame.
+        /// Other viewport elements are created lazily when the Paper renderer
+        /// asks for their texture.
         /// </summary>
         private void EnsureGameViewHost()
         {
-            if (_paperRenderer == null || RendererService is not global::V12TwoDog.Renderer renderer)
-                return;
-
+            using var _zone = V12Profiler.BeginZone("V12Runtime.EnsureGameViewHost", V12Profiler.Colors.Runtime);
+            if (_viewportSurfaces == null) return;
             var worldElement = Root.FindElement(e => e.GetComponent<V12.Components.UI.ViewportComponent>() is { RenderWorld: true });
             if (worldElement == null) return;
-            long id = worldElement.Id;
-            if (_gameViewSub != null && _gameViewViewportId == id) return;
-
-            if (_gameViewSub != null && GodotObject.IsInstanceValid(_gameViewSub))
-            {
-                renderer.UnregisterSceneViewport(_gameViewViewportId);
-                _gameViewSub.QueueFree();
-            }
-
-            var sub = new SubViewport
-            {
-                Name = "GameViewSubViewport",
-                TransparentBg = false,
-                RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
-                OwnWorld3D = false,
-                HandleInputLocally = false,
-            };
-            _host.AddChild(sub);
-            renderer.RegisterSceneViewport(id, sub);
-            _gameViewSub = sub;
-            _gameViewViewportId = id;
-
-            _paperRenderer.ViewportTextureProvider = requested =>
-                requested == id && GodotObject.IsInstanceValid(sub) ? sub.GetTexture() : null;
-            _paperRenderer.ViewportRectSink = (requested, rect) =>
-            {
-                if (requested != id || !GodotObject.IsInstanceValid(sub)) return;
-                int w = Math.Max(1, (int)rect.Size.X);
-                int h = Math.Max(1, (int)rect.Size.Y);
-                if (w > 1 && h > 1 && (w != sub.Size.X || h != sub.Size.Y))
-                    sub.Size = new Vector2I(w, h);
-            };
-
+            _viewportSurfaces.EnsureSurface(worldElement.Id);
             Root.MarkRenderDirty();
-            GD.Print($"[V12Runtime] Game-view SubViewport registered for element {id}");
         }
+
+        /// <summary>Create or return the Godot SubViewport for a V12 viewport element.</summary>
+        public SubViewport? EnsureViewportSurface(long viewportId) => _viewportSurfaces?.EnsureSurface(viewportId);
+
+        /// <summary>Release a viewport surface (its UI node or element disappeared).</summary>
+        public void ReleaseViewportSurface(long viewportId) => _viewportSurfaces?.Release(viewportId);
 
         /// <summary>
         /// Register and start an additional game pak on this runtime. Safe to call
@@ -817,6 +915,15 @@ namespace V12TwoDog
         {
             if (_disposed) return;
             _disposed = true;
+
+            // Stop Paper UI thread first — it owns the Paper instance and may be
+            // waiting on _paperWake. Wake it so it can observe cancellation.
+            try { _paperCts?.Cancel(); } catch { }
+            try { _paperWake.Set(); } catch { }
+            try { _paperThread?.Join(1000); } catch { }
+            _paperThread = null;
+            _paperCts?.Dispose(); _paperCts = null;
+            try { _paperWake.Dispose(); } catch { }
 
             XR?.Cleanup();
             _worldCanvas?.Dispose();

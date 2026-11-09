@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using V12.Components;
 using V12.Core;
 using V12.Core.Core.Interfaces;
+using V12.Core.Diagnostics;
 using V12.Core.Input;
 
 
@@ -205,6 +206,7 @@ namespace V12TwoDog
 
         public void Update()
         {
+            using var _zone = V12Profiler.BeginZone("XRTrackingService.Update", V12Profiler.Colors.Renderer);
             if (!IsAvailable)
             {
                 TryDelayedInitialize();
@@ -216,16 +218,23 @@ namespace V12TwoDog
             // the origin for a full second after the player spawns.
             _cacheTimer++;
             if (_cacheTimer > 60 || _cachedPlayer == null)
-                CacheTrackedElements();
+                using (V12Profiler.BeginZone("CacheTrackedElements", V12Profiler.Colors.World))
+                    CacheTrackedElements();
 
-            SyncOriginTransform();
-            UpdateElementLocalPose(_hmdCamera, _cachedHead);
-            UpdateElementLocalPose(PickHandSource(_leftController, _leftHandTracker), _cachedLeftHand);
-            UpdateElementLocalPose(PickHandSource(_rightController, _rightHandTracker), _cachedRightHand);
+            using (V12Profiler.BeginZone("SyncOriginTransform", V12Profiler.Colors.World))
+                SyncOriginTransform();
+            using (V12Profiler.BeginZone("UpdateElementLocalPose", V12Profiler.Colors.World))
+            {
+                UpdateElementLocalPose(_hmdCamera, _cachedHead);
+                UpdateElementLocalPose(PickHandSource(_leftController, _leftHandTracker), _cachedLeftHand);
+                UpdateElementLocalPose(PickHandSource(_rightController, _rightHandTracker), _cachedRightHand);
+            }
 
-            RegisterDirectParents();
+            using (V12Profiler.BeginZone("RegisterDirectParents", V12Profiler.Colors.Renderer))
+                RegisterDirectParents();
 
-            PollControllers();
+            using (V12Profiler.BeginZone("PollControllers", V12Profiler.Colors.Runtime))
+                PollControllers();
 
             // ── Periodic diagnostic (wall-clock, ~every 2s) so we can see what
             // the runtime reports — physics tick rate may be very high so a

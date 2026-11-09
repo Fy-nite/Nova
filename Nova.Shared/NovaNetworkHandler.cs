@@ -1,4 +1,5 @@
 using V12.Core;
+using V12.Core.Diagnostics;
 using V12.Core.Networking;
 using V12.Core.Systems;
 
@@ -19,6 +20,7 @@ namespace V12TwoDog
 
         protected override void CaptureRigExtras(PlayerSyncDTO dto)
         {
+            using var _zone = V12Profiler.BeginZone("NovaNetworkHandler.CaptureRigExtras", V12Profiler.Colors.Runtime);
             var xr = Root.Registry.Get<XRTrackingService>("XRTrackingService");
             if (xr == null) return;
             dto.LeftTrigger = xr.LeftTrigger;

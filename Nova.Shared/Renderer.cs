@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Godot;
+using V12.Core.Diagnostics;
 using V12.Core.Interfaces;
 using V12.Core.Interfaces.Renderer;
 using V12.Core.Rendering;
@@ -314,6 +315,7 @@ namespace V12TwoDog
 
 		public void step()
 		{
+			using var _zone = V12Profiler.BeginZone("Renderer.step", V12Profiler.Colors.Renderer);
 			var snapshot = new FrameSnapshot();
 			snapshot.Renderables.Capacity = _renderables.Count;
 			var parentChainIds = new HashSet<long>();
@@ -506,38 +508,45 @@ namespace V12TwoDog
 
 		public void ApplySnapshot(FrameSnapshot snapshot)
 		{
+			using var _zone = V12Profiler.BeginZone("Renderer.ApplySnapshot", V12Profiler.Colors.Renderer);
 			if (snapshot == null) return;
 
+			V12Profiler.Plot("Renderer Nodes", _nodesByElementId.Count);
+			V12Profiler.Plot("Renderer SnapshotRenderables", snapshot.Renderables.Count);
 			bool pickDataChanged = false;
 			var currentIds = new HashSet<long>();
 			_currentCamerasByViewport.Clear();
 
 			// ── Pass 1: Create all nodes (temporarily parented to root) ──
-			foreach (var rs in snapshot.Renderables)
+			using (V12Profiler.BeginZone("Renderer.ApplySnapshot.CreateNodes", V12Profiler.Colors.Renderer))
 			{
-				currentIds.Add(rs.ElementId);
-				if (_appliedSnapshots.TryGetValue(rs.ElementId, out var priorSnapshot)
-					&& PickDataChanged(priorSnapshot, rs))
-					pickDataChanged = true;
-
-				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node) || !GodotObject.IsInstanceValid(node))
+				foreach (var rs in snapshot.Renderables)
 				{
-					pickDataChanged = true;
-					node = CreateNode(rs);
-					if (node == null) continue;
+					currentIds.Add(rs.ElementId);
+					if (_appliedSnapshots.TryGetValue(rs.ElementId, out var priorSnapshot)
+						&& PickDataChanged(priorSnapshot, rs))
+						pickDataChanged = true;
 
-					root.CurrentScene.AddChild(node);
-					_nodesByElementId[rs.ElementId] = node;
+					if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node) || !GodotObject.IsInstanceValid(node))
+					{
+						pickDataChanged = true;
+						node = CreateNode(rs);
+						if (node == null) continue;
+
+						root.CurrentScene.AddChild(node);
+						_nodesByElementId[rs.ElementId] = node;
+					}
+
+					// Track which viewports have a current camera this frame. Done here
+					// (not pass 2) so the fast path can't skip the bookkeeping on
+					// unchanged camera nodes.
+					if (rs.NodeType == SnapshotNodeType.Camera && rs.IsCurrentCamera)
+						_currentCamerasByViewport.Add(rs.ViewportId);
 				}
-
-				// Track which viewports have a current camera this frame. Done here
-				// (not pass 2) so the fast path can't skip the bookkeeping on
-				// unchanged camera nodes.
-				if (rs.NodeType == SnapshotNodeType.Camera && rs.IsCurrentCamera)
-					_currentCamerasByViewport.Add(rs.ViewportId);
 			}
 
 			// ── Pass 2: Set parent-child hierarchy and local transforms ──
+			using (V12Profiler.BeginZone("Renderer.ApplySnapshot.UpdateTransforms", V12Profiler.Colors.Renderer))
 			foreach (var rs in snapshot.Renderables)
 			{
 				if (!_nodesByElementId.TryGetValue(rs.ElementId, out var node)) continue;
@@ -660,6 +669,16 @@ namespace V12TwoDog
 					{
 						node.Transform = target;
 						_nodeAnims.Remove(rs.ElementId);
+					}
+					else if (_nodeAnims.TryGetValue(rs.ElementId, out var currentAnim))
+					{
+						// Continuous motion (a spinning object) delivers a new
+						// target every frame. Restarting the glide at t=0 each
+						// time freezes the node at its first keyframe and only
+						// jumps when a frame is skipped. Retarget the existing
+						// glide and let its clock keep running.
+						currentAnim.To = target;
+						_nodeAnims[rs.ElementId] = currentAnim;
 					}
 					else
 					{
@@ -792,6 +811,7 @@ namespace V12TwoDog
 
 		private Node3D CreateNode(RenderableSnapshot rs)
 		{
+			using var _zone = V12Profiler.BeginZone("Renderer.CreateNode", V12Profiler.Colors.Renderer, text: rs.NodeType.ToString());
 			switch (rs.NodeType)
 			{
 				case SnapshotNodeType.LightPoint:
@@ -912,6 +932,7 @@ namespace V12TwoDog
 
 		private void UpdateNodeProperties(Node3D node, RenderableSnapshot rs)
 		{
+			using var _zone = V12Profiler.BeginZone("Renderer.UpdateNodeProperties", V12Profiler.Colors.Renderer);
 			switch (rs.NodeType)
 			{
 				case SnapshotNodeType.LightPoint:

@@ -42,6 +42,7 @@ namespace V12TwoDog.Paper
 
         private ProwlGameViewPanel? _gameView;
         private global::Godot.Texture2D? _gameTexture;
+        private global::Godot.SubViewport? _gameViewSub;
         private global::Godot.Control? _viewportProxy;
         private global::Prowl.Vector.Rect _gameRect;
 
@@ -370,15 +371,20 @@ namespace V12TwoDog.Paper
                 _paperRoot.AddChild(viewport);
 
             _gameTexture = viewport.GetTexture();
+            _gameViewSub = viewport;
 
-            _viewportProxy = new Control
+            if (_viewportProxy == null || !GodotObject.IsInstanceValid(_viewportProxy))
             {
-                Name = "ViewportInputProxy",
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-                Visible = true,
-            };
-            _paperRoot.AddChild(_viewportProxy);
+                _viewportProxy = new Control
+                {
+                    Name = "ViewportInputProxy",
+                    MouseFilter = Control.MouseFilterEnum.Ignore,
+                    Visible = true,
+                };
+                _paperRoot.AddChild(_viewportProxy);
+            }
             ApplyGameViewRect();
+            ApplyGameViewSize();
         }
 
         /// <summary>Rect of the game-view pane in window (Paper) coordinates.</summary>
@@ -391,6 +397,7 @@ namespace V12TwoDog.Paper
         {
             _gameRect = rect;
             ApplyGameViewRect();
+            ApplyGameViewSize();
         }
 
         private void ApplyGameViewRect()
@@ -400,6 +407,19 @@ namespace V12TwoDog.Paper
             _viewportProxy.Size = new Vector2(
                 Math.Max(1f, _gameRect.Size.X),
                 Math.Max(1f, _gameRect.Size.Y));
+        }
+
+        /// <summary>Match the offscreen 3D viewport to the pane's pixel size.
+        /// Without this the SubViewport keeps its default size and the texture
+        /// is stretched by the Paper draw, which looks low-res / squashed.</summary>
+        private void ApplyGameViewSize()
+        {
+            if (_gameViewSub == null || !GodotObject.IsInstanceValid(_gameViewSub)) return;
+            int w = Math.Max(1, (int)_gameRect.Size.X);
+            int h = Math.Max(1, (int)_gameRect.Size.Y);
+            if (w <= 1 || h <= 1) return;
+            if (_gameViewSub.Size.X != w || _gameViewSub.Size.Y != h)
+                _gameViewSub.Size = new Vector2I(w, h);
         }
 
         public IDockSpaceWidget CreateDockSpace() => Reg(new ProwlDockSpace(this));

@@ -300,16 +300,20 @@ public static class NodeConverter3D
             var mass = (float)parent.Get("mass");
             var gravityScale = (float)parent.Get("gravity_scale");
             var frozen = (bool)parent.Get("freeze");
-            return $"{ind}\t<RigidBodyComponent mass=\"{mass:F3}\" gravityScale=\"{gravityScale:F3}\" isKinematic=\"{frozen}\" />\n";
+            var bodyType = frozen ? "Kinematic" : "Dynamic";
+            return $"{ind}\t<PhysicsBodyComponent BodyType=\"{bodyType}\" />\n"
+                 + $"{ind}\t<RigidBodyComponent mass=\"{mass:F3}\" gravityScale=\"{gravityScale:F3}\" />\n";
         }
+        if (pcls == "CharacterBody3D")
+            return $"{ind}\t<PhysicsBodyComponent BodyType=\"Character\" />\n";
         if (pcls == "StaticBody3D")
-            return $"{ind}\t<PhysicsBodyComponent IsKinematic=\"true\" />\n";
+            return $"{ind}\t<PhysicsBodyComponent BodyType=\"Static\" />\n";
         return "";
     }
 
     public static string BuildStaticBodySelfXml(StaticBody3D body, string ind)
     {
-        var out_ = $"{ind}\t<PhysicsBodyComponent IsKinematic=\"true\" />\n";
+        var out_ = $"{ind}\t<PhysicsBodyComponent BodyType=\"Static\" />\n";
         foreach (Node child in body.GetChildren())
         {
             if (child is CollisionShape3D cs && cs.Shape != null)

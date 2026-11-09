@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using Godot;
 using V12.Core.Core.Interfaces;
+using V12.Core.Diagnostics;
 using V12.Core.Input;
 using V12.Core.Rendering;
 using Vector2 = System.Numerics.Vector2;
@@ -12,13 +13,13 @@ using Vector3 = System.Numerics.Vector3;
 namespace V12TwoDog.Godot
 {
     /// <summary>
-    /// Nova/Godot adapter for the Studio viewport interaction: a thin bridge that
+    /// Nova/Godot adapter for V12.Editor viewport interaction: a thin bridge that
     /// exposes renderer state through the three renderer-agnostic contracts the
-    /// core <c>ViewportInteractionService</c> consumes —
+    /// editor consumes -
     /// <see cref="IViewportRegistry"/> (viewport rects + camera matrices),
     /// <see cref="IInputSource"/> (per-frame mouse/keyboard snapshot) and
     /// <see cref="IDirectTransformProvider"/> (latency-free transform writes).
-    /// All orbit / fly / picking / gizmo logic lives in Studio.Core; this class
+    /// All orbit / fly / picking / gizmo logic lives in V12.Editor; this class
     /// only captures Godot state and applies queued transforms back onto nodes.
     ///
     /// Picking is engine-side now (<c>SceneQuery</c> walks mesh geometry), so the
@@ -47,9 +48,9 @@ namespace V12TwoDog.Godot
         /// <summary>Absolute wheel accumulator (notch × 120, scroll-up positive).</summary>
         private int _wheel;
 
-        private readonly ConcurrentDictionary<IWorldElement, Matrix4x4> _pendingTransforms = new(ReferenceEqualityComparer.Instance);
-        private readonly ConcurrentDictionary<IWorldElement, byte> _editorDriven = new(ReferenceEqualityComparer.Instance);
-        private readonly ConcurrentDictionary<IWorldElement, byte> _pendingReleases = new(ReferenceEqualityComparer.Instance);
+        private readonly ConcurrentDictionary<long, Matrix4x4> _pendingTransforms = new();
+        private readonly ConcurrentDictionary<long, byte> _editorDriven = new();
+        private readonly ConcurrentDictionary<long, byte> _pendingReleases = new();
 
         /// <summary>First visible viewport container seen this frame
         /// (main-thread only); defines the window the mouse is read in.</summary>
@@ -84,23 +85,24 @@ namespace V12TwoDog.Godot
 
         // ── IDirectTransformProvider (worker thread: queue only) ────────────
 
-        public void SetElementTransformDirect(IWorldElement element, Matrix4x4 localTransform)
+        public void SetElementTransformDirect(long elementId, Matrix4x4 localTransform)
         {
-            _editorDriven[element] = 0;
-            _pendingTransforms[element] = localTransform;
+            _editorDriven[elementId] = 0;
+            _pendingTransforms[elementId] = localTransform;
         }
 
-        public void ReleaseElementTransformDirect(IWorldElement element)
+        public void ReleaseElementTransformDirect(long elementId)
         {
-            _editorDriven.TryRemove(element, out _);
-            _pendingTransforms.TryRemove(element, out _);
-            _pendingReleases[element] = 0;
+            _editorDriven.TryRemove(elementId, out _);
+            _pendingTransforms.TryRemove(elementId, out _);
+            _pendingReleases[elementId] = 0;
         }
 
         // ── Main-thread capture (host calls from _Process, every frame) ─────
 
         public void PollInput()
         {
+            using var _zone = V12Profiler.BeginZone("GodotViewportAdapter.PollInput", V12Profiler.Colors.Runtime);
             // Viewports first: the mouse is read relative to the window that
             // hosts them, so the first visible container must be known.
             CaptureViewports();
@@ -114,25 +116,27 @@ namespace V12TwoDog.Godot
         /// and clear pending releases. Main thread only.</summary>
         public void ApplyEditorDrivenTransforms()
         {
-            foreach (var element in _pendingReleases.Keys)
+            using var _zone = V12Profiler.BeginZone("GodotViewportAdapter.ApplyEditorDrivenTransforms", V12Profiler.Colors.Runtime);
+            foreach (var elementId in _pendingReleases.Keys)
             {
-                if (!_pendingReleases.TryRemove(element, out _)) continue;
-                _renderer.SetEditorDriven(element.Id, false);
+                if (!_pendingReleases.TryRemove(elementId, out _)) continue;
+                _renderer.SetEditorDriven(elementId, false);
             }
-            foreach (var (element, transform) in _pendingTransforms)
+            foreach (var (elementId, transform) in _pendingTransforms)
             {
-                if (!_pendingTransforms.TryRemove(element, out var latest)) continue;
-                if (!_editorDriven.ContainsKey(element)) continue;
-                var node = _renderer.GetNode(element.Id);
+                if (!_pendingTransforms.TryRemove(elementId, out var latest)) continue;
+                if (!_editorDriven.ContainsKey(elementId)) continue;
+                var node = _renderer.GetNode(elementId);
                 if (node == null) continue;
                 if (!GodotObject.IsInstanceValid(node)) continue;
-                _renderer.SetEditorDriven(element.Id, true);
+                _renderer.SetEditorDriven(elementId, true);
                 node.Transform = ToGodotTransform(latest);
             }
         }
 
         private void CaptureViewports()
         {
+            using var _zone = V12Profiler.BeginZone("GodotViewportAdapter.CaptureViewports", V12Profiler.Colors.Runtime);
             var list = new List<ViewportInfo>();
             _primaryContainer = null;
 
@@ -171,6 +175,7 @@ namespace V12TwoDog.Godot
 
         private void CaptureInput()
         {
+            using var _zone = V12Profiler.BeginZone("GodotViewportAdapter.CaptureInput", V12Profiler.Colors.Runtime);
             // Coordinates must live in the same space as the viewport rects
             // (Control.GetGlobalRect). DisplayServer.MouseGetPosition() is
             // desktop-global; Control.GetGlobalMousePosition() is relative to

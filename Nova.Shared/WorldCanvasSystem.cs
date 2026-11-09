@@ -5,9 +5,9 @@ using GodotTreeItem = Godot.TreeItem;
 using V12.Components.UI;
 using V12.Core;
 using V12.Core.Core.Interfaces;
+using V12.Core.Diagnostics;
 using V12.Core.Input;
 using V12.Core.Interfaces.Renderer;
-using V12.Core.UI;
 
 namespace V12TwoDog
 {
@@ -27,7 +27,7 @@ namespace V12TwoDog
     /// Interaction: the player's aim ray is cast against world canvases each frame;
     /// pressing "interact" while pointing at a UI button invokes its click.
     /// </summary>
-    public class WorldCanvasSystem : IInputHandler, V12.Core.UI.IViewportInteraction
+    public class WorldCanvasSystem : IInputHandler
     {
         /// <summary>Label3D pixel-to-world scale (world units per font pixel).</summary>
         private const float PixelScale = 0.005f;
@@ -47,138 +47,10 @@ namespace V12TwoDog
         private CanvasNode? _grabCanvas;
         private bool _interactHeld;
 
-        // 3D viewport picking + translation gizmo (editor).
-        private readonly SceneGizmo _gizmo;
-        private Action<IWorldElement?>? _selectHandler;
-        // The viewport widget currently receiving editor input (picking/orbit).
-        private WidgetNode? _pickViewport;
-
-        // Editor orbit camera: drives the camera element the editor registered
-        // via SetEditorCamera. Right-drag orbits, wheel dollies, and selecting
-        // an object recenters the focus on it.
-        private IWorldElement? _editorCam;
-        private float _camYaw = -90f;
-        private float _camPitch = -14f;
-        private float _camDist = 7f;
-        private Vector3 _camFocus = new(0f, 0.9f, 0f);
-        private bool _orbiting;
-        private Vector2 _lastOrbitPos;
-
         public WorldCanvasSystem(Node3D host, Renderer renderer)
         {
             _host = host;
             _renderer = renderer;
-            _gizmo = new SceneGizmo(renderer);
-        }
-
-        /// <summary>Register the element the orbit camera should drive (the
-        /// editor's ViewportCamera). Pass null to stop driving.</summary>
-        public void SetEditorCamera(IWorldElement? cameraElement)
-        {
-            if (_editorCam != null && _editorCam.Id != cameraElement?.Id)
-                _renderer.SetEditorDriven(_editorCam.Id, false);
-            _editorCam = cameraElement;
-            if (_editorCam != null)
-                _renderer.SetEditorDriven(_editorCam.Id, true);
-        }
-
-        /// <summary>Switch the transform gizmo between translate / rotate / scale.</summary>
-        public void SetGizmoMode(GizmoMode mode) => _gizmo.SetMode(mode);
-
-        /// <summary>
-        /// Open a Save/Open file dialog (Godot's embedded FileDialog, which
-        /// renders fine in the 2dog host — the native OS dialogs cannot
-        /// initialize here). The dialog is a transient window above the editor
-        /// UI; <paramref name="onComplete"/> fires on the main thread with the
-        /// chosen path, or null on cancel.
-        /// </summary>
-        public void ShowFileDialog(bool save, string title, string initialPath, Action<string?> onComplete)
-        {
-            try
-            {
-                var dlg = new FileDialog
-                {
-                    Title = title,
-                    Access = FileDialog.AccessEnum.Filesystem,
-                    FileMode = save ? FileDialog.FileModeEnum.SaveFile : FileDialog.FileModeEnum.OpenFile,
-                    UseNativeDialog = false, // OS dialogs broken in this host; embedded renders in-engine
-                    Size = new Vector2I(920, 600)
-                };
-                if (!string.IsNullOrEmpty(initialPath))
-                {
-                    // Resolve to an absolute path so CurrentDir/CurrentFile get
-                    // valid values (a bare relative name would throw).
-                    string full;
-                    try { full = System.IO.Path.GetFullPath(initialPath); }
-                    catch { full = initialPath; }
-                    string dir = System.IO.Path.GetDirectoryName(full) ?? "/";
-                    string file = System.IO.Path.GetFileName(full);
-                    if (dir.Length > 0 && dir != file)
-                    {
-                        try { dlg.CurrentDir = dir; } catch { }
-                        if (file.Length > 0)
-                        {
-                            try { dlg.CurrentFile = file; } catch { }
-                        }
-                    }
-                }
-
-                dlg.FileSelected += path =>
-                {
-                    dlg.QueueFree();
-                    try { onComplete?.Invoke(path); } catch { }
-                };
-                dlg.Canceled += () => dlg.QueueFree();
-
-                _host.AddChild(dlg);
-                dlg.PopupCentered();
-            }
-            catch (Exception ex)
-            {
-                GD.PrintErr($"[WorldCanvasSystem] FileDialog failed: {ex.Message}");
-                try { onComplete?.Invoke(null); } catch { }
-            }
-        }
-
-        /// <summary>Register the callback invoked when the user picks an element
-        /// in a 3D viewport (the editor's Select).</summary>
-        public void SetSelectHandler(Action<IWorldElement?> handler) => _selectHandler = handler;
-
-        /// <summary>Show the translation gizmo around <paramref name="el"/> in the
-        /// viewport it renders in (null hides it). Also recenters the orbit
-        /// camera focus on the newly selected object (editor standard).</summary>
-        public void SetGizmoTarget(IWorldElement? el)
-        {
-            if (el == null)
-            {
-                _gizmo.SetTarget(null, null!);
-                return;
-            }
-            if (!_orbiting)
-                _camFocus = ElementWorldPosGodot(el);
-            long vpId = _renderer.GetElementViewportId(el.Id);
-            var vp = _renderer.GetSceneViewport(vpId);
-            if (vp == null)
-            {
-                foreach (var cn in _canvases.Values)
-                {
-                    foreach (var wn in cn.Widgets.Values)
-                    {
-                        if (wn.ScreenViewport != null && GodotObject.IsInstanceValid(wn.ScreenViewport))
-                        {
-                            vp = wn.ScreenViewport;
-                            break;
-                        }
-                    }
-                    if (vp != null) break;
-                }
-            }
-            if (vp == null)
-            {
-                _gizmo.SetTarget(null, null!);
-                return;
-            }
-            _gizmo.SetTarget(el, vp);
         }
 
         /// <summary>
@@ -187,7 +59,6 @@ namespace V12TwoDog
         /// </summary>
         public void Dispose()
         {
-            _gizmo.Free();
             SetHover(null);
             _grabbedWidget = null;
             _grabCanvas = null;
@@ -217,6 +88,7 @@ namespace V12TwoDog
         /// </summary>
         public void Update(GameRoot root)
         {
+            using var _zone = V12Profiler.BeginZone("WorldCanvasSystem.Update", V12Profiler.Colors.Runtime);
             _gameRoot = root;
 
             var found = new HashSet<long>();
@@ -247,156 +119,7 @@ namespace V12TwoDog
             EnsureInputRegistered();
             UpdateInteraction();
 
-            // ── Per-frame viewport input polling ──
-            // Orbit and gizmo drags are driven by polling the container-local
-            // mouse position every frame instead of reacting to motion events.
-            // This stays responsive even when the host batches motion events or
-            // the cursor leaves the small viewport mid-drag. Buttons (press/
-            // release) and wheel still come from the gui_input handler.
-            if (_pickViewport?.ScreenViewportContainer != null
-                && GodotObject.IsInstanceValid(_pickViewport.ScreenViewportContainer))
-            {
-                var vp = _pickViewport.ScreenViewportContainer;
-                if (_orbiting && !Input.IsMouseButtonPressed(MouseButton.Right))
-                    _orbiting = false;               // released outside the viewport
-                if (_gizmo.IsDragging && !Input.IsMouseButtonPressed(MouseButton.Left))
-                    _gizmo.HandleMouseUp();          // released outside the viewport
-
-                Vector2 local = vp.GetLocalMousePosition();
-                if (_orbiting)
-                {
-                    Vector2 delta = local - _lastOrbitPos;
-                    _lastOrbitPos = local;
-                    _camYaw -= delta.X * 0.25f;
-                    _camPitch = Mathf.Clamp(_camPitch + delta.Y * 0.25f, -89f, 89f);
-                }
-                else if (_gizmo.IsDragging)
-                {
-                    _gizmo.HandleMouseMove(local);
-                }
-            }
-
-            // ── Editor gizmo follows its target when not being dragged ──
-            _gizmo.Update();
-            UpdateCamera();
         }
-
-        // ── 3D viewport picking + orbit camera (editor) ───────────────────
-
-        /// <summary>Route container-local input events (clicks/drags/wheel) to
-        /// picking, the gizmo, and the orbit camera. Called via the
-        /// SubViewportContainer's gui_input signal — more reliable in this
-        /// embedded host than SubViewport input forwarding.</summary>
-        private void HandleViewportContainerInput(WidgetNode wn, global::Godot.InputEvent evt)
-        {
-            switch (evt)
-            {
-                case global::Godot.InputEventKey key when key.Pressed && !key.Echo:
-                    // T / R / S switch gizmo mode (editor convention).
-                    switch (key.Keycode)
-                    {
-                        case Key.T: _gizmo.SetMode(GizmoMode.Translate); break;
-                        case Key.R: _gizmo.SetMode(GizmoMode.Rotate); break;
-                        case Key.S: _gizmo.SetMode(GizmoMode.Scale); break;
-                    }
-                    break;
-                case InputEventMouseButton mb:
-                    // Use GetLocalMousePosition() rather than mb.Position — some
-                    // host bindings deliver gui_input positions in window (not
-                    // container-local) coordinates, which would make picking and
-                    // gizmo grabs miss everything ("click through").
-                    Vector2 localPos = wn.ScreenViewportContainer != null
-                        ? wn.ScreenViewportContainer.GetLocalMousePosition()
-                        : mb.Position;
-                    switch (mb.ButtonIndex)
-                    {
-                        case MouseButton.Left:
-                            if (mb.Pressed) HandleViewportPress(wn, localPos);
-                            else HandleViewportRelease(wn, localPos);
-                            break;
-                        case MouseButton.Right:
-                            _orbiting = mb.Pressed;
-                            _lastOrbitPos = localPos;
-                            break;
-                        case MouseButton.WheelUp:
-                            _camDist = Mathf.Clamp(_camDist * 0.9f, 1f, 200f);
-                            break;
-                        case MouseButton.WheelDown:
-                            _camDist = Mathf.Clamp(_camDist * 1.1f, 1f, 200f);
-                            break;
-                    }
-                    break;
-                case InputEventMouseMotion mm:
-                    // Continuous orbit / gizmo drags are driven by per-frame
-                    // polling (see Update) for responsiveness — motion events
-                    // here are unnecessary and can be batched by the host.
-                    break;
-            }
-        }
-
-        /// <summary>Recompute the editor camera element's transform from the
-        /// orbit state (yaw / pitch / distance / focus). The world owns truth —
-        /// the element is a V12 element with a CameraComponent — and the render
-        /// node is driven directly below so orbit input renders immediately
-        /// instead of waiting on the 60Hz worker snapshot.</summary>
-        private void UpdateCamera()
-        {
-            if (_editorCam == null) return;
-            float cp = Mathf.DegToRad(_camPitch);
-            float cy = Mathf.DegToRad(_camYaw);
-            var dir = new Vector3(Mathf.Cos(cp) * Mathf.Cos(cy), Mathf.Sin(cp), Mathf.Cos(cp) * Mathf.Sin(cy));
-            var pos = _camFocus - dir * _camDist;
-            var t = new Transform3D(new Basis(), pos).LookingAt(_camFocus, Vector3.Up);
-            var q = t.Basis.GetRotationQuaternion();
-            _editorCam.LocalTransform = new TRS
-            {
-                Position = new System.Numerics.Vector3(pos.X, pos.Y, pos.Z),
-                Rotation = new System.Numerics.Quaternion(q.X, q.Y, q.Z, q.W),
-                Scale = System.Numerics.Vector3.One
-            };
-
-            // Drive the render node directly (zero latency): the worker's 60Hz
-            // snapshot + interpolation pipeline lags fast orbit input, so the
-            // camera trails behind the mouse unless you move slowly. The world
-            // still owns truth (LocalTransform above); this just renders it
-            // immediately instead of batching it through the snapshot.
-            if (_renderer.GetNode(_editorCam.Id) is Camera3D camNode)
-                camNode.Transform = t;
-        }
-
-        /// <summary>World-space position of an element (System.Numerics →
-        /// Godot).</summary>
-        private static Vector3 ElementWorldPosGodot(IWorldElement el)
-        {
-            var m = el.WorldTransform;
-            return new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z);
-        }
-
-        private void HandleViewportPress(WidgetNode wn, Vector2 pos)
-        {
-            // Grab a gizmo handle first — a gizmo drag consumes the press.
-            if (_gizmo.HandleMouseDown(pos, wn.ScreenViewport)) return;
-
-            // Gizmo parts are grabbable, never selectable: clicks pass through.
-            long id = _renderer.PickElement(wn.ElementId, pos, _gizmo.IsGizmoPart);
-            if (id != 0)
-            {
-                var el = _gameRoot?.FindElement(e => e.Id == id);
-                if (el != null)
-                {
-                    _selectHandler?.Invoke(el);
-                    SetGizmoTarget(el);
-                }
-            }
-            else
-            {
-                _selectHandler?.Invoke(null);
-                SetGizmoTarget(null);
-            }
-        }
-
-        private void HandleViewportRelease(WidgetNode wn, Vector2 pos) => _gizmo.HandleMouseUp();
-
         public void OnInputEvent(V12.Core.Input.InputEvent evt)
         {
             if (evt.Name != "interact") return;
@@ -1539,10 +1262,9 @@ namespace V12TwoDog
                 case "viewport":
                 {
                     var vp = el.GetComponent<ViewportComponent>();
-                    // Plain SubViewport: all mouse interaction is routed through
-                    // the container's gui_input (see HandleViewportContainerInput)
-                    // — reliable in the embedded host, and gives us picking,
-                    // gizmo drags and the orbit camera from one code path.
+                    // Render-only viewport: the renderer owns the camera ->
+                    // texture path. Editor picking/orbit/gizmo consume
+                    // IViewportRegistry and SceneQuery from V12.Editor.
                     wn.ScreenViewport = new SubViewport
                     {
                         Name = "Viewport_" + el.Id,
@@ -1583,17 +1305,12 @@ namespace V12TwoDog
                     {
                         Name = "ViewportContainer_" + el.Id,
                         Stretch = true,
-                        MouseFilter = Control.MouseFilterEnum.Stop
+                        MouseFilter = Control.MouseFilterEnum.Ignore
                     };
                     wn.ScreenViewportContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
                     wn.ScreenViewportContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
                     wn.ScreenViewportContainer.AddChild(wn.ScreenViewport);
-                    // All viewport interaction (pick / gizmo / orbit) comes
-                    // through here — positions are container-local pixels,
-                    // matching the viewport's render size when Stretch is on.
-                    wn.ScreenViewportContainer.GuiInput += evt => HandleViewportContainerInput(wn, evt);
                     wn.RootControl = wn.ScreenViewportContainer;
-                    _pickViewport = wn;
 
                     _renderer.RegisterSceneViewport(el.Id, wn.ScreenViewport);
                     // Force a re-capture so static worlds reparent their nodes

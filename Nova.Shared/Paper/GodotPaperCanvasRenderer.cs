@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 using Prowl.Quill;
 using Prowl.Vector;
 using Prowl.Vector.Geometry;
+using V12.Core.Diagnostics;
 using V12.Core.UI.Paper;
+using V12TwoDog;
 
 namespace V12TwoDog.Paper
 {
@@ -30,6 +33,38 @@ namespace V12TwoDog.Paper
         private readonly List<MeshInstance2D> _pool = new();
         private readonly Dictionary<object, GodotTexture> _textures = new();
         private readonly Dictionary<int, ShaderMaterial> _materials = new();
+
+        // One mesh is cached per draw-call slot and rebuilt in place every frame
+        // (ClearSurfaces + AddSurfaceFromArrays) instead of allocating a new
+        // ArrayMesh per call per frame.
+        private readonly Dictionary<int, ArrayMesh> _meshes = new();
+
+        // Per-slot scratch buffers for the surface we hand to Godot. Sized to the
+        // draw call's index count and reused across frames.
+        private readonly Dictionary<int, SurfaceScratch> _scratch = new();
+
+        // Global vertex index -> index within the surface currently being built.
+        // Only vertices a draw call actually references are uploaded, so the full
+        // shared vertex buffer is never copied once per draw call.
+        private int[] _remap = Array.Empty<int>();
+        private readonly List<int> _remapTouched = new();
+
+        private sealed class SurfaceScratch
+        {
+            public Vector3[] Verts = Array.Empty<Vector3>();
+            public Vector2[] Uvs = Array.Empty<Vector2>();
+            public global::Godot.Color[] Colors = Array.Empty<global::Godot.Color>();
+            public int[] Indices = Array.Empty<int>();
+
+            public void Ensure(int count)
+            {
+                if (Verts.Length == count) return;
+                Verts = new Vector3[count];
+                Uvs = new Vector2[count];
+                Colors = new global::Godot.Color[count];
+                Indices = new int[count];
+            }
+        }
 
         private sealed class GodotTexture
         {
@@ -135,6 +170,59 @@ namespace V12TwoDog.Paper
 
         public override void RenderCalls(Canvas canvas, IReadOnlyList<DrawCall> drawCalls)
         {
+            using var _zone = V12Profiler.BeginZone("GodotPaperCanvasRenderer.RenderCalls", V12Profiler.Colors.Renderer);
+
+            // Paper can now be laid out off the main thread (V12Runtime UI thread).
+            // Godot SceneTree / RenderingServer calls must run on the main thread,
+            // so when we are off-main we snapshot the canvas and defer the mesh
+            // upload via GodotMainThread.
+            if (OS.GetThreadCallerId() != OS.GetMainThreadId())
+            {
+                base.RenderCalls(canvas, drawCalls);
+                if (!GodotObject.IsInstanceValid(_root)) return;
+                if (drawCalls == null || drawCalls.Count == 0) return;
+                var verts = canvas.VertexBuffer;
+                var idx = canvas.IndexBuffer;
+                if (verts == null || idx == null || verts.Length == 0 || idx.Length == 0) return;
+
+                // Snapshot everything the main-thread upload needs — canvas buffers are reused next frame.
+                var vertsCopy = verts.ToArray();
+                var idxCopy = idx.ToArray();
+                var dcCopy = new List<DrawCall>(drawCalls);
+                float fbScale = canvas.FramebufferScale <= 0f ? 1f : canvas.FramebufferScale;
+                float sdfRange = 4f;
+                global::Godot.Texture2D fontAtlas = _whiteTexture;
+                Vector2 atlasTexel = new Vector2(1f / 1024f, 1f / 1024f);
+                try
+                {
+                    var engine = canvas.Text?.FontEngine;
+                    if (engine != null)
+                    {
+                        sdfRange = engine.DistanceRange;
+                        if (engine.Texture is GodotTexture gt)
+                        {
+                            fontAtlas = gt.Texture;
+                            atlasTexel = new Vector2(1f / Math.Max(1, gt.W), 1f / Math.Max(1, gt.H));
+                        }
+                    }
+                }
+                catch { }
+
+                GodotMainThread.Execute(() =>
+                {
+                    using var _uploadZone = V12Profiler.BeginZone("GodotPaperCanvasRenderer.UploadDeferred", V12Profiler.Colors.Renderer);
+                    try
+                    {
+                        UploadSnapshot(vertsCopy, idxCopy, dcCopy, fbScale, sdfRange, fontAtlas, atlasTexel);
+                    }
+                    catch (Exception ex)
+                    {
+                        GD.PrintErr($"[GodotPaperCanvasRenderer] deferred upload failed: {ex}");
+                    }
+                });
+                return;
+            }
+
             base.RenderCalls(canvas, drawCalls); // keep PaperFrame capture for headless inspection
 
             if (!GodotObject.IsInstanceValid(_root)) return;
@@ -147,17 +235,6 @@ namespace V12TwoDog.Paper
                 {
                     HideFrom(0);
                     return;
-                }
-
-                // Vertex attributes are shared by every draw call (each call slices the index buffer).
-                var gVerts = new Vector3[verts.Length];
-                var gUvs = new Vector2[verts.Length];
-                var gColors = new global::Godot.Color[verts.Length];
-                for (int i = 0; i < verts.Length; i++)
-                {
-                    gVerts[i] = new Vector3(verts[i].Position.X, verts[i].Position.Y, 0);
-                    gUvs[i] = new Vector2(verts[i].UV.X, verts[i].UV.Y);
-                    gColors[i] = new global::Godot.Color(verts[i].r / 255f, verts[i].g / 255f, verts[i].b / 255f, verts[i].a / 255f);
                 }
 
                 float fbScale = canvas.FramebufferScale <= 0f ? 1f : canvas.FramebufferScale;
@@ -179,44 +256,115 @@ namespace V12TwoDog.Paper
                 }
                 catch { }
 
-                int indexOffset = 0;
-                int used = 0;
-
-                for (int di = 0; di < drawCalls.Count; di++)
-                {
-                    var dc = drawCalls[di];
-                    int count = dc.ElementCount;
-                    if (count <= 0) { indexOffset += count; continue; }
-                    if (indexOffset + count > idx.Length) count = idx.Length - indexOffset;
-                    if (count <= 0) break;
-
-                    var gIndices = new int[count];
-                    for (int i = 0; i < count; i++) gIndices[i] = (int)idx[indexOffset + i];
-
-                    var arrays = new global::Godot.Collections.Array();
-                    arrays.Resize((int)Mesh.ArrayType.Max);
-                    arrays[(int)Mesh.ArrayType.Vertex] = gVerts;
-                    arrays[(int)Mesh.ArrayType.TexUV] = gUvs;
-                    arrays[(int)Mesh.ArrayType.Color] = gColors;
-                    arrays[(int)Mesh.ArrayType.Index] = gIndices;
-
-                    var mesh = new ArrayMesh();
-                    mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-
-                    var inst = Acquire(used++);
-                    inst.Mesh = mesh;
-                    inst.Material = BuildMaterial(di, dc, fbScale, sdfRange, fontAtlas, atlasTexel);
-                    inst.Visible = true;
-
-                    indexOffset += dc.ElementCount;
-                }
-
-                HideFrom(used);
+                UploadSnapshot(verts, idx, drawCalls, fbScale, sdfRange, fontAtlas, atlasTexel);
             }
             catch (Exception ex)
             {
                 GD.PrintErr($"[GodotPaperCanvasRenderer] RenderCalls failed: {ex}");
             }
+        }
+
+        /// <summary>
+        /// Build/refresh every draw call's mesh from a frame snapshot. Each slot
+        /// owns a cached <see cref="ArrayMesh"/> that is cleared and refilled in
+        /// place; only the vertices a draw call references are uploaded, so the
+        /// whole shared vertex buffer is never copied once per call.
+        /// Must run on the main thread (Godot rendering calls).
+        /// </summary>
+        private void UploadSnapshot(
+            Prowl.Quill.Vertex[] verts,
+            uint[] idx,
+            IReadOnlyList<DrawCall> drawCalls,
+            float fbScale,
+            float sdfRange,
+            global::Godot.Texture2D fontAtlas,
+            Vector2 atlasTexel)
+        {
+            if (!GodotObject.IsInstanceValid(_root)) return;
+            if (drawCalls.Count == 0 || verts.Length == 0 || idx.Length == 0)
+            {
+                HideFrom(0);
+                return;
+            }
+
+            if (_remap.Length < verts.Length)
+            {
+                _remap = new int[Math.Max(verts.Length, 1024)];
+                Array.Fill(_remap, -1);
+            }
+
+            int indexOffset = 0;
+            int used = 0;
+
+            for (int di = 0; di < drawCalls.Count; di++)
+            {
+                var dc = drawCalls[di];
+                int count = dc.ElementCount;
+                if (count <= 0) { indexOffset += count; continue; }
+                if (indexOffset + count > idx.Length) count = idx.Length - indexOffset;
+                if (count <= 0) break;
+
+                if (!_scratch.TryGetValue(di, out var scratch))
+                {
+                    scratch = new SurfaceScratch();
+                    _scratch[di] = scratch;
+                }
+                scratch.Ensure(count);
+
+                // Gather only the vertices this draw call references, remapping the
+                // global index buffer entries into the surface's local 0..n range.
+                int localCount = 0;
+                _remapTouched.Clear();
+                for (int i = 0; i < count; i++)
+                {
+                    int g = (int)idx[indexOffset + i];
+                    if ((uint)g >= (uint)verts.Length) { scratch.Indices[i] = 0; continue; }
+
+                    int li = _remap[g];
+                    if (li < 0)
+                    {
+                        li = localCount++;
+                        _remap[g] = li;
+                        _remapTouched.Add(g);
+
+                        var v = verts[g];
+                        scratch.Verts[li] = new Vector3(v.Position.X, v.Position.Y, 0);
+                        scratch.Uvs[li] = new Vector2(v.UV.X, v.UV.Y);
+                        scratch.Colors[li] = new global::Godot.Color(v.r / 255f, v.g / 255f, v.b / 255f, v.a / 255f);
+                    }
+                    scratch.Indices[i] = li;
+                }
+                foreach (int g in _remapTouched) _remap[g] = -1;
+
+                var arrays = new global::Godot.Collections.Array();
+                arrays.Resize((int)Mesh.ArrayType.Max);
+                arrays[(int)Mesh.ArrayType.Vertex] = scratch.Verts;
+                arrays[(int)Mesh.ArrayType.TexUV] = scratch.Uvs;
+                arrays[(int)Mesh.ArrayType.Color] = scratch.Colors;
+                arrays[(int)Mesh.ArrayType.Index] = scratch.Indices;
+
+                // Reuse the slot's mesh across frames: clear the old surface and
+                // upload the new one into the same ArrayMesh.
+                if (!_meshes.TryGetValue(di, out var mesh))
+                {
+                    mesh = new ArrayMesh();
+                    _meshes[di] = mesh;
+                }
+                else
+                {
+                    mesh.ClearSurfaces();
+                }
+                mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+
+                var inst = Acquire(used++);
+                inst.Mesh = mesh;
+                inst.Material = BuildMaterial(di, dc, fbScale, sdfRange, fontAtlas, atlasTexel);
+                inst.Visible = true;
+
+                indexOffset += dc.ElementCount;
+            }
+
+            HideFrom(used);
         }
 
         private MeshInstance2D Acquire(int index)
@@ -282,6 +430,8 @@ namespace V12TwoDog.Paper
                 if (GodotObject.IsInstanceValid(inst)) inst.QueueFree();
             _pool.Clear();
             _materials.Clear();
+            _meshes.Clear();
+            _scratch.Clear();
         }
     }
 }
