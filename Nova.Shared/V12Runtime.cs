@@ -855,7 +855,7 @@ namespace V12TwoDog
         {
             using var _zone = V12Profiler.BeginZone("V12Runtime.EnsureGameViewHost", V12Profiler.Colors.Runtime);
             if (_viewportSurfaces == null) return;
-            var worldElement = Root.FindElement(e => e.GetComponent<V12.Components.UI.ViewportComponent>() is { RenderWorld: true });
+            var worldElement = Root.FindElement(e => e.GetComponent<V12.Components.UI.ViewportComponent>() is { IsActive: true });
             if (worldElement == null) return;
             _viewportSurfaces.EnsureSurface(worldElement.Id);
             Root.MarkRenderDirty();

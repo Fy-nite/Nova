@@ -399,8 +399,32 @@ namespace V12TwoDog
         public long Id { get; }
         public Rid BodyRid { get; set; }
         public Rid ShapeRid { get; set; }
-        public float GravityScale { get; set; } = 1f;
         public bool IsDynamic { get; set; } = true;
+
+        private float _mass = 1f;
+        private float _gravityScale = 1f;
+
+        public float Mass
+        {
+            get => _mass;
+            set
+            {
+                _mass = value > 0f ? value : 0.001f;
+                if (BodyRid.IsValid)
+                    GodotMainThread.Execute(() => _server.BodySetParam(BodyRid, PhysicsServer3D.BodyParameter.Mass, _mass));
+            }
+        }
+
+        public float GravityScale
+        {
+            get => _gravityScale;
+            set
+            {
+                _gravityScale = value;
+                if (BodyRid.IsValid)
+                    GodotMainThread.Execute(() => _server.BodySetParam(BodyRid, PhysicsServer3D.BodyParameter.GravityScale, value));
+            }
+        }
         /// <summary>Live scene node when this body is a character controller (otherwise null).</summary>
         public CharacterBody3D? CharNode { get; set; }
         public bool IsCharacterController => CharNode != null;
@@ -423,6 +447,8 @@ namespace V12TwoDog
             _cachedPosition = desc.Position;
             _cachedRotation = desc.Rotation;
             _cachedVelocity = NumVec3.Zero;
+            _mass = desc.Mass > 0f ? desc.Mass : 1f;
+            _gravityScale = desc.GravityScale;
         }
 
         public NumVec3 Position
@@ -475,7 +501,16 @@ namespace V12TwoDog
             GodotMainThread.Execute(() =>
             {
                 if (!BodyRid.IsValid) return;
-                _server.BodyApplyImpulse(BodyRid, new Vector3(force.X, force.Y, force.Z), null);
+                _server.BodyApplyCentralForce(BodyRid, new Vector3(force.X, force.Y, force.Z));
+            });
+        }
+
+        public void AddImpulse(NumVec3 impulse)
+        {
+            GodotMainThread.Execute(() =>
+            {
+                if (!BodyRid.IsValid) return;
+                _server.BodyApplyImpulse(BodyRid, new Vector3(impulse.X, impulse.Y, impulse.Z), null);
             });
         }
 
@@ -484,7 +519,16 @@ namespace V12TwoDog
             GodotMainThread.Execute(() =>
             {
                 if (!BodyRid.IsValid) return;
-                _server.BodyApplyTorqueImpulse(BodyRid, new Vector3(torque.X, torque.Y, torque.Z));
+                _server.BodyApplyTorque(BodyRid, new Vector3(torque.X, torque.Y, torque.Z));
+            });
+        }
+
+        public void AddAngularImpulse(NumVec3 impulse)
+        {
+            GodotMainThread.Execute(() =>
+            {
+                if (!BodyRid.IsValid) return;
+                _server.BodyApplyTorqueImpulse(BodyRid, new Vector3(impulse.X, impulse.Y, impulse.Z));
             });
         }
 
